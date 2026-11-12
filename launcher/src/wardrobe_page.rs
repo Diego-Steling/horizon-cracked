@@ -1262,19 +1262,7 @@ impl Launcher {
     }
 
     /// No Microsoft account selected: the way to sign in (the Wardrobe's and the Shop's).
-    fn wardrobe_sign_in(&self, cx: &mut Context<Self>) -> Div {
-        let t = self.theme;
-        let sign_in = button(
-            "wardrobe-sign-in",
-            "Sign in with Microsoft",
-            Kind::Primary,
-            &t,
-        )
-        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-            this.go(Page::Settings);
-            this.start_sign_in();
-            cx.notify();
-        }));
+    fn wardrobe_sign_in(&self, _cx: &mut Context<Self>) -> Div {
         glass::plate(radius::PANEL)
             .flex()
             .items_center()
@@ -1282,9 +1270,8 @@ impl Launcher {
             .gap(px(16.))
             .p(px(24.))
             .child(
-                ui::text(15., FontWeight::MEDIUM, ink::FULL).child(tr("Sign in to use cosmetics.")),
+                ui::text(15., FontWeight::MEDIUM, ink::FULL).child(tr("Offline")),
             )
-            .child(sign_in)
     }
 
     /// Sets whether the pointer turns the view, for its hand.

@@ -867,7 +867,7 @@ impl Default for Links {
     fn default() -> Self {
         Self {
             discord: String::new(),
-            website: "https://github.com/Diego-Steling/horizon-cracked/releases/latest".into(),
+            website: String::new(),
         }
     }
 }
@@ -3165,7 +3165,7 @@ pub fn client_as(tag: &str, who: Option<&account::Player>) -> Result<Command, St
     play_step("reading the sign-in");
     let hint = |refused: String| format!("{refused} {}", crate::i18n::tr(SIGN_IN_HINT));
     let session = match who {
-        None => account::session_for_game(&game_home(), false).map_err(|refused| {
+        None => account::session_for_game(&game_home(), true).map_err(|refused| {
             // A keyring that didn't answer isn't a missing sign-in (#12179).
             match refused.keyring {
                 Some(why) => why,
@@ -6276,7 +6276,7 @@ pub fn {f}("
     fn links_fall_back_to_the_built_in_ones() {
         let defaults = Links::default();
         assert_eq!(defaults.discord, "");
-        assert_eq!(defaults.website, "https://github.com/Diego-Steling/horizon-cracked/releases/latest");
+        assert_eq!(defaults.website, "");
         // The file on main says the same thing as the defaults.
         assert_eq!(Links::parse(include_str!("../links.json")), defaults);
         // Unreadable or missing, offline included: the defaults.

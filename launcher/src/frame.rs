@@ -476,77 +476,7 @@ impl Launcher {
             _ => {}
         }
 
-        if !self.links.discord.is_empty() {
-            let url = self.links.discord.clone();
-            foot = foot.child(keyboard(
-                div()
-                    .id("discord")
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .gap(px(10.))
-                    .mt(px(12.))
-                    // At least 40 high: a long translation wraps onto a second line, which grows the
-                    // button instead of spilling out of it.
-                    .min_h(px(40.))
-                    .px(px(12.))
-                    .py(px(8.))
-                    .rounded(px(radius::ROW))
-                    .bg(ui::color(horizon_theme::glass::DISCORD))
-                    .hover(|s| s.bg(ui::color(horizon_theme::glass::DISCORD_HOVER)))
-                    .cursor_pointer()
-                    .child(ui::icon("discord", 18., gpui::white()))
-                    .child(
-                        ui::text(14., FontWeight::SEMIBOLD, ink::FULL)
-                            .min_w_0()
-                            .text_center()
-                            .child(tr("Join the Discord")),
-                    )
-                    .on_click(move |_, _, cx| cx.open_url(&url)),
-                &t,
-            ));
-        }
-        let link = |id: &'static str, label: &'static str, icon: &'static str, url: String| {
-            let id = SharedString::from(id);
-            keyboard(
-                track_hover(
-                    div()
-                        .id(id.clone())
-                        .relative()
-                        .flex()
-                        .items_center()
-                        .gap(px(10.))
-                        .h(px(36.))
-                        .px(px(8.))
-                        .rounded(px(radius::ROW))
-                        .cursor_pointer()
-                        .text_color(white(ink::SOFT))
-                        .hover(|s| s.text_color(white(ink::FULL)))
-                        .child(hover_layer(&id, white(fill::HOVER), radius::ROW, 0.))
-                        .child(ui::icon(icon, 17., white(ink::SOFT)).relative())
-                        .child(
-                            div()
-                                .relative()
-                                .font_family(horizon_theme::glass::FONT)
-                                .text_size(px(14.))
-                                .child(label),
-                        )
-                        .on_click(move |_, _, cx| cx.open_url(&url)),
-                    id,
-                ),
-                &t,
-            )
-        };
-        let mut links = div().flex().flex_col().mt(px(8.));
-        if !self.links.website.is_empty() {
-            links = links.child(link(
-                "website",
-                tr("Website"),
-                "globe-02",
-                self.links.website.clone(),
-            ));
-        }
-        foot = foot.child(links).child(
+        foot = foot.child(
             ui::text(12., FontWeight::NORMAL, ink::DIM)
                 .id("launcher-version")
                 .px(px(8.))
@@ -670,33 +600,6 @@ impl Launcher {
             .child(keyboard(chip, &t))
             .children(self.glass_account_menu(cx));
 
-        // Signing in with Microsoft, while nobody is: the mockup's button.
-        let sign_in = (!matches!(self.accounts.player(), Player::Microsoft(_))).then(|| {
-            keyboard(
-                div()
-                    .id("topbar-sign-in")
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .h(px(44.))
-                    .px(px(16.))
-                    .rounded(px(radius::ROW))
-                    .bg(white(fill::BUTTON))
-                    .hover(|s| s.bg(white(fill::BUTTON_HOVER)))
-                    .cursor_pointer()
-                    .child(microsoft::logo(16.))
-                    .child(
-                        ui::text(14., FontWeight::MEDIUM, ink::FULL)
-                            .child(tr("Sign in with Microsoft")),
-                    )
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.start_sign_in();
-                        cx.notify();
-                    })),
-                &t,
-            )
-        });
         let settings = ui::icon_button(
             "nav-Settings",
             "sliders-horizontal",
@@ -753,7 +656,6 @@ impl Launcher {
                     .gap(px(6.))
                     .children(build_log)
                     .child(account)
-                    .children(sign_in)
                     .child(settings),
             )
     }

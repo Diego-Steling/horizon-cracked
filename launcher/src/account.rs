@@ -2676,23 +2676,45 @@ fn java_player_with(
     store: &dyn SecretStore,
     accounts: &mut Accounts,
 ) -> Result<crate::java_launch::Player, String> {
-    let pass = launch(ep, client_id, store, accounts).map_err(|e| e.to_string())?;
-    let kept = || {
-        let order = accounts.selected().into_iter().chain(&accounts.accounts);
-        order
-            .into_iter()
-            .find_map(|a| Some((a.clone(), secrets_in(store, &a.uuid).filter(|s| s.owns)?)))
-    };
-    let (account, secrets) = pass
-        .session
-        .or(pass.owner)
-        .or_else(kept)
-        .ok_or_else(|| NoOwner::default().to_string())?;
+    let pass = launch(ep, client_id, store, accounts).map_err(|e| e.to_string());
+    if let Ok(pass) = pass {
+        let kept = || {
+            let order = accounts.selected().into_iter().chain(&accounts.accounts);
+            order
+                .into_iter()
+                .find_map(|a| Some((a.clone(), secrets_in(store, &a.uuid).filter(|s| s.owns)?)))
+        };
+        if let Some((account, secrets)) = pass.session.or(pass.owner).or_else(kept) {
+            return Ok(crate::java_launch::Player {
+                name: account.name,
+                uuid: account.uuid,
+                token: secrets.minecraft_token,
+                xuid: secrets.xuid.unwrap_or_default(),
+            });
+        }
+    } else if !accounts.accounts.is_empty() {
+        return Err(pass.unwrap_err());
+    }
+    let name = accounts
+        .name_arg()
+        .or(accounts.offline_selected.as_deref())
+        .or_else(|| accounts.offline.first().map(String::as_str))
+        .unwrap_or("Player");
+    let u = horizon_platform::protocol::offline_uuid(name);
+    let h = format!("{u:032x}");
+    let uuid = format!(
+        "{}-{}-{}-{}-{}",
+        &h[..8],
+        &h[8..12],
+        &h[12..16],
+        &h[16..20],
+        &h[20..]
+    );
     Ok(crate::java_launch::Player {
-        name: account.name,
-        uuid: account.uuid,
-        token: secrets.minecraft_token,
-        xuid: secrets.xuid.unwrap_or_default(),
+        name: name.to_string(),
+        uuid,
+        token: "0".to_string(),
+        xuid: String::new(),
     })
 }
 
