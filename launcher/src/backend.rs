@@ -2114,7 +2114,8 @@ fn download_for_owner(
     log: &dyn Fn(String),
 ) -> Result<(), String> {
     let mut accounts = account::Accounts::load();
-    // Any account that owns the game may download it (`launch`), not only the one that plays.
+    // The strict gate, never `launch_for_game`: the developer option that lets offline names
+    // play without an owner must not download the game for them.
     let pass = account::launch(
         &account::Endpoints::live(),
         account::client_id().as_deref(),
@@ -3174,14 +3175,14 @@ pub fn client(tag: &str) -> Result<Command, String> {
 pub const SIGN_IN_HINT: &str = "Sign in with `horizon-launcher account sign-in`.";
 
 /// [`client`], playing as `who` for this launch only (`play --account`).
-pub fn client_as(tag: &str, who: Option<&str>) -> Result<Command, String> {
+pub fn client_as(tag: &str, who: Option<&account::Player>) -> Result<Command, String> {
     if let Some(error) = game_architecture_launch_error(tag) {
         return Err(error);
     }
     play_step("reading the sign-in");
     let hint = |refused: String| format!("{refused} {}", crate::i18n::tr(SIGN_IN_HINT));
     let session = match who {
-        None => account::session_for_game(&game_home()).map_err(|refused| {
+        None => account::session_for_game(&game_home(), false).map_err(|refused| {
             // A keyring that didn't answer isn't a missing sign-in (#12179).
             match refused.keyring {
                 Some(why) => why,
@@ -4407,6 +4408,11 @@ impl WhilePlaying {
     }
 }
 
+/// Offline names are on unless the player turned them off.
+fn offline_on() -> bool {
+    true
+}
+
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct Settings {
     pub selected: Option<String>,
@@ -4511,6 +4517,11 @@ pub struct Settings {
     /// An older file's switch for the release profile, read when `native_profile` is unset.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub native_release: bool,
+    /// Offline names play without an account that owns the game, in the window only
+    /// (`account::Accounts::play_as_with`, `account::launch_for_game`). Never a download: the game still
+    /// comes from the player's own install. On by default; only a player who turned it off has `false`.
+    #[serde(default = "offline_on", skip_serializing_if = "std::ops::Not::not")]
+    pub dev_offline: bool,
 }
 
 impl Settings {
@@ -4519,7 +4530,10 @@ impl Settings {
     }
     pub fn parse(text: &str) -> Self {
         let Ok(mut value) = serde_json::from_str::<serde_json::Value>(text) else {
-            return Self::default();
+            return Self {
+                dev_offline: true,
+                ..Self::default()
+            };
         };
         if let Some(fields) = value.as_object_mut() {
             // An appearance from a newer launcher is Dark, not a reason to lose every setting.
@@ -4559,7 +4573,10 @@ impl Settings {
                 fields.remove("language");
             }
         }
-        serde_json::from_value(value).unwrap_or_default()
+        serde_json::from_value(value).unwrap_or_else(|_| Self {
+            dev_offline: true,
+            ..Self::default()
+        })
     }
     /// Whether the launcher keeps its entry in the applications menu (Linux).
     pub fn desktop_entry(&self) -> bool {
