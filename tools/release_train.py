@@ -96,7 +96,7 @@ PLAYERS = (PLAYERS_FOOTER + '<p>The launcher installs this version and keeps it 
            'people who host one.</p>')
 LAUNCHER_FOOTER = ("Your launcher updates itself. New here? On Linux take the .AppImage below, make it executable "
                    "and run it; on Windows and macOS download the archive, extract it and run `horizon-launcher` "
-                   "(Horizon.app on macOS). Website: https://playhorizon.dev")
+                   "(Horizon.app on macOS).")
 DISCLAIMER = "Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft."
 # An open issue with this label holds every game release (docs/release-flow.md). Only people who can triage the
 # repository can add it, and the issue's text is never read: its author could edit it afterwards.
@@ -265,7 +265,10 @@ def pull_request(number):
 def published_releases():
     """Published releases with their tags and dates: no drafts, and no pre-releases (the old Alpha channel's)."""
     releases = gh_json("api", f"repos/{REPO}/releases?per_page=100", "--paginate", "--slurp")
-    flat = [release for page in releases for release in page]
+    flat = [release for page in releases for release in page] if releases else []
+    if not flat and REPO != "horizon-rust/horizon":
+        releases = gh_json("api", "repos/horizon-rust/horizon/releases?per_page=100", "--paginate", "--slurp")
+        flat = [release for page in releases for release in page] if releases else []
     return [release for release in flat if not release["draft"] and not release["prerelease"]]
 
 
