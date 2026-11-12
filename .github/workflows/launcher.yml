@@ -72,6 +72,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          fetch-tags: true
       - id: mode
         # Off main every run is a dry run (a launcher branch's push only builds).
         run: echo "dry_run=${{ github.ref != 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.dry_run) }}" >> "$GITHUB_OUTPUT"
@@ -384,6 +385,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          fetch-tags: true
       - name: Notes
         env:
           GH_TOKEN: ${{ github.token }}

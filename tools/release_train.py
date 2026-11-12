@@ -484,6 +484,8 @@ def gather(kind, head, releases=None):
     paths."""
     releases = published_releases() if releases is None else releases
     last = last_release(releases, kind)
+    if last and subprocess.run(["git", "rev-parse", "--verify", "--quiet", last["tag_name"]], capture_output=True).returncode != 0:
+        subprocess.run(["git", "fetch", "--tags", "origin"], capture_output=True)
     base = last["tag_name"] if last else run("git", "rev-list", "--max-parents=0", head).split()[0]
     return last, merged_between(kind, base, head)
 
