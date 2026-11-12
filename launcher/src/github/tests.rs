@@ -11,7 +11,8 @@ fn scratch(name: &str) -> PathBuf {
 const T0: u64 = 1_800_000_000;
 const LATER: u64 = T0 + FRESH_SECS;
 
-const RELEASES: &str = "https://api.github.com/repos/horizon-rust/horizon/releases?per_page=100";
+const RELEASES: &str =
+    "https://api.github.com/repos/Diego-Steling/horizon-cracked/releases?per_page=100";
 
 fn list(tag: &str) -> serde_json::Value {
     serde_json::json!([{ "tag_name": tag }])
@@ -24,24 +25,27 @@ fn no_mirror(_: &str) -> Answer {
 #[test]
 fn mirror_serves_only_horizons_repository() {
     let base = "https://mcp.example/github/public";
+    let expected_releases = format!("{base}/repos/{}/releases?per_page=100", backend::REPO);
+    let tag_url = format!(
+        "https://api.github.com/repos/{}/releases/tags/launcher@0.2.33",
+        backend::REPO
+    );
+    let expected_tag = format!("{base}/repos/{}/releases/tags/launcher@0.2.33", backend::REPO);
+    let not_api = format!("https://github.com/{}/releases", backend::REPO);
     assert_eq!(
         mirror_url_with(RELEASES, base).as_deref(),
-        Some("https://mcp.example/github/public/repos/horizon-rust/horizon/releases?per_page=100")
+        Some(expected_releases.as_str())
     );
     assert_eq!(
-        mirror_url_with(
-            "https://api.github.com/repos/horizon-rust/horizon/releases/tags/launcher@0.2.33",
-            &format!("{base}/")
-        )
-        .as_deref(),
-        Some("https://mcp.example/github/public/repos/horizon-rust/horizon/releases/tags/launcher@0.2.33")
+        mirror_url_with(&tag_url, &format!("{base}/")).as_deref(),
+        Some(expected_tag.as_str())
     );
     assert_eq!(
         mirror_url_with("https://api.github.com/repos/someone/mod/commits/abc", base),
         None
     );
     assert_eq!(
-        mirror_url_with("https://github.com/horizon-rust/horizon/releases", base),
+        mirror_url_with(&not_api, base),
         None
     );
     assert_eq!(
@@ -148,11 +152,12 @@ fn rate_limited_reads_go_through_the_mirror() {
         },
     );
     assert_eq!(got.unwrap(), list("nightly"));
+    let expected_suffix = format!("/github/public/repos/{}/releases?per_page=100", backend::REPO);
     assert!(asked
         .borrow()
         .as_deref()
         .unwrap()
-        .ends_with("/github/public/repos/horizon-rust/horizon/releases?per_page=100"));
+        .ends_with(&expected_suffix));
     // The mirror's answer is kept like GitHub's.
     let kept = json_with(RELEASES, &cache, T0 + 1, |_, _| panic!("fresh"), no_mirror);
     assert_eq!(kept.unwrap(), list("nightly"));

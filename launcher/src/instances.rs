@@ -447,7 +447,7 @@ pub fn select(query: &str) -> Result<Instance, String> {
 }
 
 /// What a copy of a game folder leaves out: other instances and packs, logs and crash reports,
-/// caches, data collection's state, and sign-in sessions (a session never leaves its folder).
+/// caches, and sign-in sessions (a session never leaves its folder).
 const NOT_COPIED: &[&str] = &[
     OWN,
     "ports",
@@ -455,7 +455,6 @@ const NOT_COPIED: &[&str] = &[
     "logs",
     "crash-reports",
     "sessions",
-    "telemetry",
     "mod-browser",
     ".horizon-cache",
     // Far terrain's copies of what servers sent, rebuilt as the instance plays.
@@ -674,8 +673,8 @@ pub fn play_time(played: Duration) -> String {
 }
 
 /// Turns the game's command into this instance: its own game folder, and a pack's mods. The
-/// player's answers that hold everywhere follow it in: data collection and No AI as the
-/// launcher has them, and options.txt and the offline name when it has none yet.
+/// player's answers that hold everywhere follow it in: No AI as the launcher has it, and
+/// options.txt and the offline name when it has none yet.
 pub fn apply(cmd: &mut Command, instance: &Instance) -> Result<(), String> {
     instance.horizon()?;
     match instance.kind {
@@ -697,12 +696,6 @@ fn follow_player(game_home: &Path, home: &Path) {
         if !home.join(f).exists() && game_home.join(f).is_file() {
             let _ = fs::copy(game_home.join(f), home.join(f));
         }
-    }
-    let consent = horizon_telemetry::consent::Consent::path(game_home);
-    if consent.is_file() {
-        let to = horizon_telemetry::consent::Consent::path(home);
-        let _ = fs::create_dir_all(to.parent().unwrap());
-        let _ = fs::copy(consent, to);
     }
     let no_ai = horizon_platform::no_ai::is_on(game_home);
     if horizon_platform::no_ai::is_on(home) != no_ai {

@@ -1,26 +1,9 @@
 //! How many play on a Minecraft server, by the server-list status ping every client sends to show
 //! a server in its Multiplayer list (vanilla's `ServerStatusPinger`): a handshake asking for the
 //! status state, a status request, and the server's JSON answer. Nothing about the asker is sent.
-//!
-//! The launcher shows the official server's count beside "N playing now", and the telemetry
-//! server writes it down every minute for playhorizon.dev/stats (`history`, the `official`
-//! series). [`OFFICIAL_ADDRESS`] is the official server's built-in address for both; the launcher
-//! takes the current one from `launcher/links.json`.
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
-
-/// Horizon's official survival server (SMP), from `horizon_addresses`. The launcher's server list
-/// offers the same entry (`launcher/src/server_list.rs`) until links.json names another; the
-/// telemetry server's `HORIZON_TELEMETRY_OFFICIAL_SERVER` overrides it there.
-pub const OFFICIAL_ADDRESS: &str = horizon_addresses::OFFICIAL_SERVER;
-
-/// The official server's earlier addresses ([`horizon_addresses::OFFICIAL_SERVER_PREVIOUS`]).
-pub const OFFICIAL_PREVIOUS: &[&str] = horizon_addresses::OFFICIAL_SERVER_PREVIOUS;
-
-/// [`OFFICIAL_ADDRESS`] with the port its SRV record gives, for askers that don't look SRV up
-/// (the telemetry server).
-pub const OFFICIAL_STATUS_ADDRESS: &str = horizon_addresses::OFFICIAL_SERVER_STATUS;
 
 /// The port a server address without one means.
 pub const DEFAULT_PORT: u16 = 25565;
@@ -65,6 +48,14 @@ pub fn split_address(address: &str) -> Option<(String, u16)> {
 pub fn players(address: &str, timeout: Duration) -> Result<Players, String> {
     let (host, port) = split_address(address).ok_or("not a server address")?;
     players_at(address, (&host, port), timeout)
+}
+
+/// A server's players by its server-list status ping, as the game's Multiplayer list sends it
+/// (through the address's SRV record), with a 3-second timeout. None when it doesn't answer.
+pub fn server_players(address: &str) -> Option<Players> {
+    let (host, port) = split_address(address)?;
+    let (host, port) = horizon_platform::protocol::server_redirect(&host, port);
+    players_at(address, (&host, port), Duration::from_secs(3)).ok()
 }
 
 /// [`players`], connecting to `target` instead: where the address's SRV record leads. The
@@ -240,7 +231,7 @@ mod tests {
     #[test]
     fn bad_answers_are_refused() {
         assert!(read_answer(&mut [0x00].as_slice()).is_err());
-        assert!(read_answer(&mut answer("{}")[..2].as_ref()).is_err());
+        assert!(read_answer(&mut &answer("{}")[..2]).is_err());
         let mut wrong_id = answer("{}");
         wrong_id[1] = 0x01;
         assert!(read_answer(&mut wrong_id.as_slice()).is_err());

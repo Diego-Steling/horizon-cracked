@@ -23,9 +23,6 @@ pub fn main_with(mods: crate::mod_api::Mods) {
         horizon_client::options_ui::HORIZON_EXTRAS
             .store(false, std::sync::atomic::Ordering::Relaxed);
     }
-    horizon_client::telemetry::mark_start();
-    // Opt-in telemetry keeps each crash report (docs/telemetry.md), whatever the mode.
-    crash::on_report(horizon_client::telemetry::keep_crash);
     // Crates above the engine registered their hooks before this (horizon-official's `main`),
     // then the Horizon parts still in this crate; none registers after this point.
     game::player_hooks::register();
@@ -53,7 +50,7 @@ pub fn main_with(mods: crate::mod_api::Mods) {
         (folder, "server", "Server thread")
     } else {
         // --player-dir too (a game's, not a server's): a player of a shared game folder keeps
-        // its log and crash reports in its own; crash telemetry stays with the home's consent.
+        // its log and crash reports in its own.
         if let Some(dir) = game_args
             .clone()
             .skip_while(|a| *a != "--player-dir")

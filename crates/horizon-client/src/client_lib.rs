@@ -126,6 +126,7 @@ pub mod save;
 pub mod scoreboard_cmd;
 pub mod screen_layout;
 pub mod screen_narrator;
+pub mod scrub;
 pub mod social_screen;
 pub mod sound_playback;
 pub use horizon_server_files as server;
@@ -141,7 +142,6 @@ pub mod stations;
 pub mod stopwatches;
 pub mod structure_blocks;
 pub mod studio;
-pub mod telemetry;
 #[cfg(test)]
 pub(crate) mod test_fixtures;
 pub mod text_display;

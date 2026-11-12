@@ -1,4 +1,4 @@
-"""The images Railway builds for the telemetry server and the mod registry copy only the crates they name.
+"""The images Railway builds for the mod registry copy only the crates they name.
 
 Each service is its own workspace with its own Cargo.lock. When one of its crates gains a path dependency on
 another crate of the repository, the image must copy that crate too, and Railway must rebuild when it changes:
@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SERVICES = ["horizon-telemetry-server", "horizon-mod-registry"]
+SERVICES = ["horizon-mod-registry"]
 
 
 def path_packages(lock: Path) -> set[str]:

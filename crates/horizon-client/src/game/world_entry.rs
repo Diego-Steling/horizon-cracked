@@ -8,7 +8,6 @@ impl Game<'_> {
         if self.rest_loader.is_none() {
             return Ok(false);
         }
-        self.perf.world_opening();
         if self.title.is_none() {
             self.title = Some(
                 Title::new(
