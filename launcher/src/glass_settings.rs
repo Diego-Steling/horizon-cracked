@@ -507,7 +507,7 @@ mod tests {
     /// top ever to reach 30 % of the pane.
     const TOPS: [f32; 7] = [0., 420., 700., 1000., 1300., 1600., 1900.];
     const HEIGHT: f32 = 600.;
-    const MAX: f32 = 1900. - HEIGHT;
+    const MAX: f32 = 2100. - HEIGHT;
 
     fn at(scrolled: f32) -> usize {
         let tops: Vec<f32> = TOPS.iter().map(|t| t - scrolled).collect();
