@@ -235,9 +235,12 @@ jobs:
             fi
             [[ $status == 0 ]] || exit $status
           fi
-          retry "$launcher" install latest
+          # The newest Nightly predates its own signature (SHA256SUMS.v2.sig), which the launcher
+          # requires: install the newest stable release instead until a signed Nightly exists.
+          stable=$(retry "$launcher" --json versions | python3 -c 'import json,sys; vs=[v for v in json.load(sys.stdin) if v["available_here"] and not v["tag"].startswith("nightly-")]; print(vs[0]["tag"])')
+          retry "$launcher" install "$stable"
           "$launcher" versions --installed
-          # `install latest` is the Nightly since #3342 (versions/nightly-<date>-<commit>), a vX.Y.Z before.
+          # The stable release installed above lands under versions/<tag>/.
           clients=("$HORIZON_LAUNCHER_HOME"/versions/*/horizon-client*)
           client="${clients[0]}"
           echo "installed client: $client"

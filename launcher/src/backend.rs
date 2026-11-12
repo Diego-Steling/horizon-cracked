@@ -1087,8 +1087,9 @@ pub(crate) fn fetch_small(url: &str) -> Result<Option<Vec<u8>>, String> {
 }
 
 /// The SHA-256 the release's signed checksums give for `asset`, or why it must not be installed.
-fn signed_digest(tag: &str, asset: &str) -> Result<String, String> {
+fn signed_digest(repo: &str, tag: &str, asset: &str) -> Result<String, String> {
     crate::signed::digest(
+        repo,
         tag,
         asset,
         &horizon_release_sign::trusted_keys(),
@@ -1213,6 +1214,7 @@ pub fn install(release: &Release, progress: impl Fn(f32)) -> Result<(), String> 
                     )
                 })?;
             crate::signed::nightly_digest(
+                GAME_REPO,
                 github_tag,
                 &version,
                 asset,
@@ -1220,7 +1222,7 @@ pub fn install(release: &Release, progress: impl Fn(f32)) -> Result<(), String> 
                 fetch_small,
             )?
         }
-        None if is_game_tag(tag) => signed_digest(tag, asset)?,
+        None if is_game_tag(tag) => signed_digest(GAME_REPO, tag, asset)?,
         None => return Err(format!("{tag} is not a Horizon release.")),
     };
     install_as(
@@ -3943,7 +3945,7 @@ pub fn stage_update(release: &Release, progress: impl Fn(f32)) -> Result<Option<
     {
         return Ok(None);
     }
-    let sha256 = signed_digest(&release.tag, launcher_asset().unwrap_or_default())?;
+    let sha256 = signed_digest(REPO, &release.tag, launcher_asset().unwrap_or_default())?;
     let work = update_work_dir();
     remove_abandoned_stages(&work, std::time::SystemTime::now(), process_alive);
     let stage = new_stage_folder(&work)?;
