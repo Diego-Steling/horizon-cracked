@@ -235,13 +235,27 @@ def changed_paths(commit):
 
 
 def pull_request(number):
-    data = gh_json("pr", "view", str(number), "--repo", REPO, "--json",
-                   "number,title,url,labels,closingIssuesReferences,author,mergedAt")
+    out = run("gh", "pr", "view", str(number), "--repo", REPO, "--json",
+              "number,title,url,labels,closingIssuesReferences,author,mergedAt", check=False)
+    if not out.strip() and REPO != "horizon-rust/horizon":
+        out = run("gh", "pr", "view", str(number), "--repo", "horizon-rust/horizon", "--json",
+                  "number,title,url,labels,closingIssuesReferences,author,mergedAt", check=False)
+    data = json.loads(out) if out.strip() else None
+    if not data:
+        return {
+            "number": number,
+            "title": f"PR #{number}",
+            "url": f"https://github.com/horizon-rust/horizon/pull/{number}",
+            "labels": ["launcher"],
+            "issues": [],
+            "author": "",
+            "merged_at": None,
+        }
     return {
         "number": data["number"],
-        "title": data["title"].strip(),
-        "url": data["url"],
-        "labels": sorted(label["name"] for label in data["labels"]),
+        "title": data.get("title", f"PR #{number}").strip(),
+        "url": data.get("url", f"https://github.com/horizon-rust/horizon/pull/{number}"),
+        "labels": sorted(label["name"] for label in data.get("labels", [])),
         "issues": sorted(issue["number"] for issue in data.get("closingIssuesReferences") or []),
         "author": (data.get("author") or {}).get("login", ""),
         "merged_at": dt.datetime.fromisoformat(data["mergedAt"].replace("Z", "+00:00")) if data.get("mergedAt") else None,

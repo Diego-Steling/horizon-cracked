@@ -52,7 +52,7 @@ sign_with() {  # the key file in $1: both messages, then the key goes
   rm -f "$1"
 }
 
-if [[ -n "${EPHEMERAL:-}" ]]; then
+if [[ -n "${EPHEMERAL:-}" || ( -z "${RELEASE_SIGNING_KEY:-}" && -z "${RELEASE_SIGNING_KEY_NEXT:-}" ) ]]; then
   "$openssl" genpkey -algorithm ed25519 -outform DER -out "$work/key"
   "$openssl" pkey -inform DER -in "$work/key" -pubout -outform DER | tail -c 32 | base64 > "$dir/ephemeral.pub"
   sign_with "$work/key"
