@@ -1,0 +1,267 @@
+name: launcher-linux
+# Linux only, for now: the launcher is built, tested, signed and published on Ubuntu alone.
+# macOS and Windows stay in launcher.yml, which runs by hand until Linux is green and released.
+# The version and the tag are given to the build (HORIZON_LAUNCHER_VERSION, HORIZON_LAUNCHER_TAG): no bump
+# commits. Never marked latest. Pushes to launcher branches only build. RELEASES_PAUSED=1 stops releases.
+# Linux ships two archives of one binary: the .tar.gz the launcher updates itself from, and an
+# AppImage (packaging/linux/appimage.sh) for players without a distribution package, which replaces
+# itself instead (launcher/src/backend.rs).
+#   gh workflow run launcher-linux --ref <branch>                    # dry run: builds, publishes nothing
+#   gh workflow run launcher-linux --ref main -f dry_run=false -f force=true
+
+on:
+  push:
+    branches: [main, launcher, 'launcher-*']
+    paths:
+      # Everything the launcher is built and packaged from, as tools/release_train.py's LAUNCHER_PATHS.
+      - 'launcher/**'
+      - 'crates/horizon-bench/**'
+      - 'crates/horizon-friends/**'
+      - 'crates/horizon-mcp/**'
+      - 'crates/horizon-mods/**'
+      - 'crates/horizon-port-pack/**'
+      - 'crates/horizon-prepare/**'
+      - 'crates/horizon-release-sign/**'
+      - 'crates/horizon-theme/**'
+      - 'packaging/linux/**'
+      - 'packaging/icons/**'
+      - '.github/workflows/launcher-linux.yml'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and write the notes, but publish nothing
+        type: boolean
+        default: true
+      force:
+        description: Release even without launcher changes, before merges settle or while paused
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: launcher-linux-${{ github.ref == 'refs/heads/main' && 'release' || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  decide:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      release: ${{ steps.decide.outputs.release }}
+      tag: ${{ steps.decide.outputs.tag }}
+      head: ${{ steps.decide.outputs.head }}
+      version: ${{ steps.decide.outputs.version }}
+      dry_run: ${{ steps.mode.outputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - id: mode
+        # Off main every run is a dry run (a launcher branch's push only builds).
+        run: echo "dry_run=${{ github.ref != 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.dry_run) }}" >> "$GITHUB_OUTPUT"
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASES_PAUSED: ${{ vars.RELEASES_PAUSED }}
+          # A push or a run off main builds its own commit; otherwise main's newest commit with green checks.
+          HEAD_SHA: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || steps.mode.outputs.dry_run == 'true') && github.sha || '' }}
+          FORCE: ${{ (inputs.force || github.event_name == 'workflow_dispatch') && 'yes' || '' }}
+        run: |
+          python3 tools/release_train.py decide --kind launcher ${HEAD_SHA:+--head "$HEAD_SHA"} ${FORCE:+--force} | tee decision.json
+          echo "### $(jq -r '.reason' decision.json)" >> "$GITHUB_STEP_SUMMARY"
+          tag=$(jq -r '.tag' decision.json)
+          version=${tag#launcher-v}
+          echo "version=${version#launcher@}" >> "$GITHUB_OUTPUT"
+          release=$(jq -r '.release' decision.json)
+          if [[ "$release" == "true" ]]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "head=$(jq -r '.head' decision.json)" >> "$GITHUB_OUTPUT"
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          fi
+          # A dry run (and a launcher branch's push) builds whatever the decision.
+          if [[ "${{ steps.mode.outputs.dry_run }}" == true ]]; then
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "head=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: decide
+    if: needs.decide.outputs.release == 'true'
+    name: build linux
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    env:
+      BIN: target/release
+      HORIZON_MSA_CLIENT_ID: ${{ vars.HORIZON_MSA_CLIENT_ID }}
+      HORIZON_CURSEFORGE_API_KEY: ${{ secrets.HORIZON_CURSEFORGE_API_KEY }}
+      HORIZON_LAUNCHER_VERSION: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && needs.decide.outputs.version || '' }}
+      HORIZON_LAUNCHER_TAG: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && needs.decide.outputs.tag || '' }}
+    defaults:
+      run:
+        working-directory: launcher
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.decide.outputs.head }}
+          persist-credentials: false
+          clean: true
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, 2026-11
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: runner.environment == 'github-hosted'
+        with:
+          workspaces: launcher
+          shared-key: launcher-linux
+      - name: Linux libraries GPUI links to
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libfontconfig-dev libvulkan-dev libasound2-dev patchelf
+      # Every test target (the library, the binary, tests/).
+      - run: cargo test --release --locked
+      - run: cargo build --release --locked
+      - name: The version is the release's
+        run: |
+          out=$("$BIN/horizon-launcher" --version)
+          echo "$out"
+          expected="${HORIZON_LAUNCHER_VERSION:-$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)}"
+          [[ "$out" == "horizon-launcher $expected" ]] || { echo "::error::expected horizon-launcher $expected"; exit 1; }
+      - name: Smoke test
+        env:
+          HORIZON_LAUNCHER_NO_SELF_UPDATE: '1'
+          HORIZON_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export HORIZON_LAUNCHER_HOME="${RUNNER_TEMP//\\//}/horizon-launcher-smoke"
+          export HORIZON_HOME="$HORIZON_LAUNCHER_HOME/game"
+          rm -rf "$HORIZON_LAUNCHER_HOME"
+          launcher="$PWD/$BIN/horizon-launcher"
+          # GitHub's API rate-limits shared runner addresses now and then: try a few times.
+          retry() { for i in 1 2 3 4; do "$@" && return 0; sleep $((i * 15)); done; return 1; }
+          retry "$launcher" versions
+          "$launcher" links --json
+          retry "$launcher" install latest
+          "$launcher" versions --installed
+          # `install latest` is the Nightly since #3342 (versions/nightly-<date>-<commit>), a vX.Y.Z before.
+          clients=("$HORIZON_LAUNCHER_HOME"/versions/*/horizon-client*)
+          client="${clients[0]}"
+          echo "installed client: $client"
+          [[ -f "$client" ]] || { echo "::error::no game installed under versions/"; exit 1; }
+          # The game's Linux build is the game's to keep portable (release.yml checks it): a
+          # release linked to a Nix store is a warning here, not a broken launcher.
+          soft() { "$@" || echo "::warning::$* failed"; }
+          soft python3 ../tools/check_imports.py "$client"
+          # The client starts: --help prints before any window or GPU is needed.
+          help() { "$client" --help > "$RUNNER_TEMP/help.txt" 2>&1 && head -3 "$RUNNER_TEMP/help.txt" && grep -q -- '--resources' "$RUNNER_TEMP/help.txt"; }
+          soft help
+          rm -rf "$HORIZON_LAUNCHER_HOME"
+      - name: Package
+        run: |
+          rm -rf dist out && mkdir -p out
+          version=${HORIZON_LAUNCHER_VERSION:-$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)}
+          # The .tar.gz below is what the launcher updates itself from; the AppImage is what a
+          # player downloads and double-clicks, and it replaces itself instead
+          # (packaging/linux/appimage.sh, launcher/src/backend.rs).
+          ../packaging/linux/appimage.sh "$BIN/horizon-launcher" "$version" out
+          mkdir -p dist
+          cp "$BIN/horizon-launcher" dist/
+          (cd dist && tar czf ../out/horizon-launcher-linux-x86_64.tar.gz horizon-launcher)
+          ls -l out
+      - uses: actions/upload-artifact@v7
+        with:
+          name: horizon-launcher-linux
+          path: launcher/out/*
+          retention-days: 3
+
+  sign:
+    needs: [decide, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The only job that holds the release signing key, a secret of the `release` environment, which only main's real
+    # releases enter (dry runs sign with a throwaway key). It runs no code from the repository but
+    # tools/ci/sign_release.sh, which calls only the runner's sha256sum and OpenSSL (docs/release-flow.md).
+    environment: ${{ needs.decide.outputs.dry_run != 'true' && 'release' || '' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: tools/ci/sign_release.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: horizon-launcher-*
+          merge-multiple: true
+      - name: Sign the checksums (SHA256SUMS, SHA256SUMS.sig)
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          RELEASE_SIGNING_KEY_NEXT: ${{ secrets.RELEASE_SIGNING_KEY_NEXT }}
+          EPHEMERAL: ${{ needs.decide.outputs.dry_run == 'true' && 'yes' || '' }}
+          TAG: ${{ needs.decide.outputs.tag }}
+        run: bash tools/ci/sign_release.sh "$TAG" dist/horizon-launcher-*
+      - uses: actions/upload-artifact@v7
+        with:
+          name: signature
+          path: dist/SHA256SUMS*
+          if-no-files-found: error
+          retention-days: 3
+      - uses: actions/upload-artifact@v7
+        if: needs.decide.outputs.dry_run == 'true' || hashFiles('dist/ephemeral.pub') != ''
+        with:
+          name: ephemeral.pub
+          path: dist/ephemeral.pub
+          retention-days: 3
+
+  release:
+    needs: [decide, build, sign]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/release_train.py notes --kind launcher --tag "${{ needs.decide.outputs.tag }}" \
+            --head "${{ needs.decide.outputs.head }}" --out notes > /dev/null
+          { echo "## $(cat notes/title.txt)"; echo; cat notes/body.md; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: The signature, checked as launchers check it
+        env:
+          TAG: ${{ needs.decide.outputs.tag }}
+          EPHEMERAL: ${{ needs.decide.outputs.dry_run == 'true' && 'yes' || '' }}
+        run: |
+          key=(); [[ -f dist/ephemeral.pub ]] && key=(--key "$(cat dist/ephemeral.pub)")
+          cargo run --locked --quiet -p horizon-release-sign -- verify --tag "$TAG" --publishing "${key[@]}" dist
+      # Never marked latest: Horizon's own releases stay the repository's latest.
+      - name: Publish ${{ needs.decide.outputs.tag }} (Linux only)
+        if: needs.decide.outputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.decide.outputs.tag }}
+        run: |
+          signature=(); [[ -f dist/SHA256SUMS.sig ]] && signature=(dist/SHA256SUMS.sig)
+          gh release create "$TAG" --target "${{ needs.decide.outputs.head }}" --title "$(cat notes/title.txt)" \
+            --notes-file notes/body.md --latest=false dist/horizon-launcher-linux-* dist/SHA256SUMS "${signature[@]}"
+      - name: Dry run, the release that would be published
+        if: needs.decide.outputs.dry_run == 'true'
+        run: |
+          echo "Would publish ${{ needs.decide.outputs.tag }} at ${{ needs.decide.outputs.head }}: $(cat notes/title.txt)"
+          ls -l dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: launcher-linux-release-notes
+          path: notes/
+          retention-days: 3
