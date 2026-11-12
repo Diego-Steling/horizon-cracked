@@ -87,7 +87,9 @@ jobs:
 
   build:
     needs: decide
-    if: needs.decide.outputs.release == 'true'
+    # macOS runs only when a working runner is named in the MAC_RUNNER variable; without one its
+    # jobs would sit queued forever, so they are skipped and the release ships Linux and Windows.
+    if: needs.decide.outputs.release == 'true' && (!matrix.mac || vars.MAC_RUNNER != '')
     name: build ${{ matrix.name }}
     # Windows ARM64 is new: its failure never holds the other platforms' release (the signing job
     # needs this job, and a failed entry of it would fail it). The release steps leave the missing
