@@ -28,8 +28,6 @@ concurrency:
   group: checks-${{ github.event.pull_request.number || (github.event_name == 'push' && 'main') || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
-  # Test runs never reach the telemetry server: no live-count ping, no uploads (docs/telemetry.md).
-  HORIZON_TELEMETRY_URL: "off"
   # Whether a job saves its build folder's sticky disk (see verify below). Only main's pushes and the merge queue do;
   # every pull request, a fork's too, starts from what they built and its changes are discarded, so nothing a pull
   # request builds reaches main's disk. Forks once had a disk of their own, but pull_request jobs never save one
