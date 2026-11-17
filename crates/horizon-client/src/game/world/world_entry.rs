@@ -16,7 +16,6 @@ impl Game<'_> {
         if self.rest_loader.is_none() {
             return Ok(false);
         }
-        self.perf.world_opening();
         if self.title.is_none() {
             let title = self
                 .new_title(std::env::current_dir()?.join("saves"))

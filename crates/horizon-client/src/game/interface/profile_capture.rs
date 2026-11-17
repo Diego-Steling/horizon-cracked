@@ -566,7 +566,7 @@ impl Game<'_> {
         self.profile.stopped_after = None;
         let mut start = client_perf::start_message(
             self.integrated.is_some(),
-            horizon_client::telemetry::gpu_name().as_deref(),
+            crate::gfx::adapter().map(|gpu| gpu.name).as_deref(),
         );
         start.mods = self.perf_mods();
         let t = self.profile.perf.now();

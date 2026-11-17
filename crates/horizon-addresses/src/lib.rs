@@ -5,35 +5,17 @@
 //! This is a Horizon-layer crate: the engine and the platform never depend on it. Platform code
 //! that talks to a service gets the address passed in from a Horizon crate.
 
-/// Horizon's official survival server (SMP), offered once at the top of the server list by the
-/// game and the launcher (`launcher/links.json` may name another). Its SRV record leads to the
-/// port.
-pub const OFFICIAL_SERVER: &str = "play.playhorizon.dev";
-
-/// The official server's earlier addresses: the game and the launcher move a server list's
-/// entries for them to [`OFFICIAL_SERVER`], once. A move appends the old address here (and to
-/// `official_server_previous` in `launcher/links.json`).
-pub const OFFICIAL_SERVER_PREVIOUS: &[&str] = &["horizon.bunchy7s.dev"];
-
-/// Afri-Network, a partner server the game added once below the official server (#9299) until
-/// the partnership ended: kept so the game can take back out the entry it added.
-pub const WITHDRAWN_PARTNER_SERVER: &str = "afri-network.co.za";
-
-/// [`OFFICIAL_SERVER`] with the port its SRV record gives, for askers that don't look SRV up
-/// (the telemetry server's status checks).
-pub const OFFICIAL_SERVER_STATUS: &str = "play.playhorizon.dev:24454";
-
-/// Horizon's website, where the launcher is downloaded: the game started without its prepared
+/// This fork's website, where the launcher is downloaded: the game started without its prepared
 /// files sends the player there.
-pub const WEBSITE: &str = "https://playhorizon.dev";
+pub const WEBSITE: &str = "https://github.com/Diego-Steling/horizon-cracked";
 
 /// Minecraft's product links, offered by the official build's Mods screen.
 pub const MINECRAFT_WEBSITE: &str = "https://minecraft.net";
 pub const MINECRAFT_ISSUES: &str = "https://bugs.mojang.com";
 
-/// Horizon's license and issue tracker, offered by the official build's Mods screen.
-pub const LICENSE: &str = "https://github.com/horizon-rust/horizon/blob/main/LICENSE";
-pub const ISSUES: &str = "https://github.com/horizon-rust/horizon/issues";
+/// This fork's license and issue tracker, offered by the build's Mods screen.
+pub const LICENSE: &str = "https://github.com/Diego-Steling/horizon-cracked/blob/main/LICENSE";
+pub const ISSUES: &str = "https://github.com/Diego-Steling/horizon-cracked/issues";
 
 /// Modpack file hosts, including GitHub's release redirects and the loader's Maven repository.
 /// The launcher and porting CLI pass this policy to the platform's checked downloader.
@@ -50,10 +32,6 @@ pub const MODPACK_DOWNLOAD_HOSTS: &[&str] = &[
 /// The cosmetics service: cosmetics, emotes, "Show me as a Horizon player"
 /// (`HORIZON_COSMETICS_API` overrides it).
 pub const COSMETICS_API: &str = "https://cosmetics.playhorizon.dev";
-
-/// The telemetry ingest server (`crates/horizon-telemetry-server`): opt-in telemetry, the
-/// "I'm playing" ping, benchmark uploads (`HORIZON_TELEMETRY_URL` overrides it).
-pub const TELEMETRY: &str = "https://telemetry.playhorizon.dev";
 
 /// The performance viewer page a saved capture opens in (`HORIZON_PERF_VIEWER` overrides it).
 pub const PERF_VIEWER: &str = "https://playhorizon.dev/perf";

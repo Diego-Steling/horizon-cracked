@@ -1669,8 +1669,6 @@ struct Game<'a> {
         horizon_threads::alloc_count::Counts,
         horizon_threads::alloc_count::Counts,
     )>,
-    /// This play session's frame and tick times, for opt-in performance statistics.
-    perf: horizon_client::telemetry::Session,
     /// Control replies waiting for a rendered frame or a benchmark deadline.
     pending_screenshot: Option<std::sync::mpsc::Sender<String>>,
     /// `screenshot-sequence` while it runs.
@@ -8991,7 +8989,6 @@ impl Game<'_> {
                     && event.physical_key == PhysicalKey::Code(KeyCode::Escape))
         {
             self.pending_entry = None;
-            self.perf.cancel_world_opening();
             return;
         }
         if (self.pending_entry.is_some() || self.integrated_starting.is_some())
@@ -10257,15 +10254,10 @@ impl Game<'_> {
                                 self.started.elapsed().as_millis()
                             );
                         }
-                        if self.title.is_some() {
-                            self.perf.title_shown();
-                        }
                         if self.title.is_none()
                             && self.screen == Screen::Playing
                             && self.player.is_some()
                         {
-                            self.perf
-                                .frame(elapsed.as_secs_f32() * 1000.0, &frame_spans);
                             if startup::filling() {
                                 let mut fill: Vec<(&'static str, usize)> =
                                     self.streaming.stages().to_vec();
@@ -10833,7 +10825,6 @@ impl<'a> Game<'a> {
             agent_last: None,
             frame_stats: Default::default(),
             alloc_mark: None,
-            perf: Default::default(),
             pending_screenshot: None,
             screenshot_sequence: None,
             pending_render_capture: None,
@@ -11102,14 +11093,6 @@ pub(crate) fn run_with(
         options.spikes = Some(dedicated::SLOW_TICK_MS);
     }
     tick_profile::want_spans(tick_profile::SPANS_SPIKES, options.spikes.is_some());
-    // A player who allows performance statistics also says what their slow frames spent their
-    // time in: this thread, which draws the frames, times its steps (wall time only).
-    if options.execution_role.is_client()
-        && horizon_telemetry::Consent::load(&horizon_client::logging::game_home())
-            .allows(horizon_telemetry::Kind::Perf)
-    {
-        horizon_client::spans::record_here(true);
-    }
     let vanilla_root = options.resources.clone();
     // Saves from before 1.13 upgrade with vanilla's tables, prepared from the player's jar.
     horizon_world::datafix::set_resources(
@@ -11198,15 +11181,6 @@ pub(crate) fn run_with(
     // Minecraft's constructor opens the narrator; a server has none.
     if options.execution_role.is_client() {
         narrator::start(&early_settings);
-    }
-    // Someone is playing: the anonymous ping behind the launcher's "N playing now", and the
-    // official server in their list (servers.dat in the game folder, the working directory). Not
-    // for a server, a benchmark, a run that quits by itself, a harness's fixture or a run that
-    // horizon-ctl drives: those start in a source checkout and wrote the list there.
-    if !options.offscreen && !synchronous_startup(&options) {
-        let version = horizon_client::telemetry::version();
-        let game_dir = horizon_client::logging::player_dir();
-        horizon_hooks::engine::started(&horizon_hooks::Started::new(&version, &game_dir));
     }
     // A game window's hooks (Discord's presence): never for a server.
     activity::client_started(&options);

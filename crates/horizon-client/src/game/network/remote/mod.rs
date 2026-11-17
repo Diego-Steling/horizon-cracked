@@ -959,7 +959,6 @@ impl Game<'_> {
     ) -> Result<()> {
         self.realm_session = realm;
         self.reset_tutorial();
-        self.perf.world_opening();
         // A server's own biomes come over the connection; the last local
         // world's packed table must not name its ids. The window's own
         // server thread keeps the one it just set.
@@ -1281,7 +1280,6 @@ impl Game<'_> {
     pub(super) fn init_remote_for_replay(&mut self) -> Result<()> {
         self.realm_session = false;
         self.reset_tutorial();
-        self.perf.world_opening();
         self.world_biomes = None;
         self.world_biomes_base = None;
         let root = self.options.resources.clone();
@@ -1524,7 +1522,6 @@ impl Game<'_> {
             return self.begin_closing_save(false);
         }
         self.client_logging_out();
-        self.finish_perf();
         if reason.is_none() {
             // Leaving on purpose: nothing for auto-reconnect to retry.
             self.extras_left();

@@ -87,7 +87,6 @@ horizon-theme = { path = "../horizon-theme" }
 horizon-system = { path = "../horizon-system" }
 # Opt-in data collection: the game keeps, the launcher sends (docs/telemetry.md). The
 # anonymous "I'm playing" ping is the Horizon layer's (`horizon-heartbeat`, in the official executable).
-horizon-telemetry = { path = "../horizon-telemetry", default-features = false }
 horizon-bench = { path = "../horizon-bench" }
 crc32fast = "1"
 zip = { version = "9.1.3", default-features = false, features = ["deflate"] }

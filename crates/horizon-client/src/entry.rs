@@ -117,9 +117,6 @@ pub fn start<G>(
         horizon_client::options_ui::HORIZON_EXTRAS
             .store(false, std::sync::atomic::Ordering::Relaxed);
     }
-    horizon_client::telemetry::mark_start();
-    // Opt-in telemetry keeps each crash report (docs/telemetry.md), whatever the mode.
-    crash::on_report(horizon_client::telemetry::keep_crash);
     // Crates above the engine registered their hooks before this (horizon-official's `main`),
     // then the Horizon parts still in this crate; none registers after this point.
     game::player_hooks::register();

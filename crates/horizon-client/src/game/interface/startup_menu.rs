@@ -53,7 +53,6 @@ pub(super) struct StartupMenu {
     pub reload_packs: bool,
     /// Browse mods' worker (`mod_browser`).
     mod_jobs: super::mod_browser::Jobs,
-    perf: horizon_client::telemetry::Session,
 }
 
 /// `QuickPlay.joinMultiplayerWorld`: an address the server list lacks is saved
@@ -159,7 +158,6 @@ impl StartupMenu {
             None => game.title = None,
         }
         game.pending_entry = self.pending.take();
-        game.perf = std::mem::take(&mut self.perf);
         game.mod_jobs = std::mem::take(&mut self.mod_jobs);
         game.cursor = self.cursor;
         game.modifiers = self.modifiers;
@@ -275,7 +273,6 @@ impl StartupMenu {
             _ => return,
         };
         self.pending = Some(entry);
-        self.perf.world_opening();
     }
 
     fn shortcut(&mut self, event: &KeyEvent) -> Option<clipboard::EditShortcut> {
