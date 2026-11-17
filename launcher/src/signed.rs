@@ -4,11 +4,11 @@
 //! with the SHA-256 pinned for it in legacy-releases.txt (a rollback). Anything else is refused
 //! with a message saying why.
 
-use crate::backend::REPO;
 use horizon_release_sign::{Channel, PublicKey, SIGNATURE, SIGNATURE_V2, SUMS};
 
-/// Where a release's attached file downloads from (GitHub's fixed address for it).
-pub fn asset_url(tag: &str, name: &str) -> String {
+/// Where a release's attached file downloads from (GitHub's fixed address for it), in `repo`:
+/// the game's releases come from the upstream repository, this launcher's from the fork.
+pub fn asset_url(repo: &str, tag: &str, name: &str) -> String {
     // Metadata supplies path components, never URL syntax or another repository.
     let component = |text: &str| -> String {
         text.bytes()
@@ -21,26 +21,27 @@ pub fn asset_url(tag: &str, name: &str) -> String {
             .collect()
     };
     format!(
-        "https://github.com/{REPO}/releases/download/{}/{}",
+        "https://github.com/{repo}/releases/download/{}/{}",
         component(tag),
         component(name)
     )
 }
 
-/// The signed SHA-256 of `asset` in release `tag`, fetching its SHA256SUMS and SHA256SUMS.sig
-/// with `fetch` (None: the release has no such file), or why the download must be refused. A
-/// release from before signing gets its pinned SHA-256, whatever files it carries now.
+/// The signed SHA-256 of `asset` in release `tag` of `repo`, fetching its SHA256SUMS and
+/// SHA256SUMS.sig with `fetch` (None: the release has no such file), or why the download must be
+/// refused. A release from before signing gets its pinned SHA-256, whatever files it carries now.
 pub fn digest(
+    repo: &str,
     tag: &str,
     asset: &str,
     keys: &[PublicKey],
     fetch: impl Fn(&str) -> Result<Option<Vec<u8>>, String>,
 ) -> Result<String, String> {
-    if let Some(hex) = horizon_release_sign::legacy_digest_for(REPO, tag, asset) {
+    if let Some(hex) = horizon_release_sign::legacy_digest_for(repo, tag, asset) {
         return Ok(hex.to_owned());
     }
-    let sums = fetch(&asset_url(tag, SUMS))?;
-    let signature = fetch(&asset_url(tag, SIGNATURE))?
+    let sums = fetch(&asset_url(repo, tag, SUMS))?;
+    let signature = fetch(&asset_url(repo, tag, SIGNATURE))?
         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
     horizon_release_sign::signed_digest(tag, asset, sums.as_deref(), signature.as_deref(), keys)
 }
@@ -51,8 +52,8 @@ pub fn title_version(tag: &str, title: &str) -> Option<String> {
     horizon_release_sign::build_title_version(Channel::of(tag)?, title)
 }
 
-/// The signed SHA-256 of `asset` in the Nightly or snapshot published under `tag` (`nightly`, a
-/// dated `nightly-<date>`, or `snapshot-<date>-<commit>`) that installs as `version`
+/// The signed SHA-256 of `asset` in the Nightly or snapshot published under `tag` of `repo`
+/// (`nightly`, a dated `nightly-<date>`, or `snapshot-<date>-<commit>`) that installs as `version`
 /// (`<channel>-<date>-<commit>`, parsed strictly from its title by
 /// `horizon_release_sign::build_title_version`): its SHA256SUMS.v2.sig must sign the checksums for
 /// exactly that version, so an older Nightly can't be served as a newer one, nor a snapshot as a
@@ -62,6 +63,7 @@ pub fn title_version(tag: &str, title: &str) -> Option<String> {
 /// release's title. `tag` is a Nightly's tag the release list kept (`is_nightly` only) or the
 /// snapshot tag a developer named (`release_selection::snapshot`).
 pub fn build_digest(
+    repo: &str,
     tag: &str,
     version: &str,
     asset: &str,
@@ -69,8 +71,8 @@ pub fn build_digest(
     fetch: impl Fn(&str) -> Result<Option<Vec<u8>>, String>,
 ) -> Result<String, String> {
     let channel = Channel::of(tag).ok_or_else(|| format!("{tag} is not a Horizon release."))?;
-    let sums = fetch(&asset_url(tag, SUMS))?;
-    let signature = fetch(&asset_url(tag, SIGNATURE_V2))?
+    let sums = fetch(&asset_url(repo, tag, SUMS))?;
+    let signature = fetch(&asset_url(repo, tag, SIGNATURE_V2))?
         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
     horizon_release_sign::build_digest(
         channel,
@@ -85,11 +87,12 @@ pub fn build_digest(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::GAME_REPO;
     use horizon_release_sign::{sha256_hex, sums_file, SigningKey};
 
     #[test]
     fn metadata_cannot_escape_the_fork_download_path() {
-        assert_eq!(asset_url("v1/../../other?x#y", "a%b.zip"),
+        assert_eq!(asset_url(GAME_REPO, "v1/../../other?x#y", "a%b.zip"),
             "https://github.com/horizon-rust/horizon/releases/download/v1%2F..%2F..%2Fother%3Fx%23y/a%25b.zip");
     }
 
@@ -127,7 +130,7 @@ mod tests {
         .is_none());
         // The launcher's own repository is upstream, so its pinned digest wins over anything fetched.
         assert_eq!(
-            digest("v2026.10.12", "horizon-linux-x86_64.tar.gz", &[], tampered),
+            digest(GAME_REPO, "v2026.10.12", "horizon-linux-x86_64.tar.gz", &[], tampered),
             Ok("81fba8b54900ddc1c56f7cb5d235b67f4f762647d68be02d26068e98bd7ad4e0".to_owned())
         );
     }
@@ -151,21 +154,21 @@ mod tests {
         };
         let keys = [key.public()];
         assert_eq!(
-            digest("v2099.01.01", "horizon.zip", &keys, signed),
+            digest(GAME_REPO, "v2099.01.01", "horizon.zip", &keys, signed),
             Ok(sha256_hex(b"game"))
         );
         // Signed for another tag, by another key, or not listing the archive: refused.
-        assert!(digest("v2099.01.02", "horizon.zip", &keys, signed).is_err());
+        assert!(digest(GAME_REPO, "v2099.01.02", "horizon.zip", &keys, signed).is_err());
         let (other, _) = SigningKey::generate().unwrap();
-        assert!(digest("v2099.01.01", "horizon.zip", &[other.public()], signed).is_err());
-        assert!(digest("v2099.01.01", "other.zip", &keys, signed).is_err());
+        assert!(digest(GAME_REPO, "v2099.01.01", "horizon.zip", &[other.public()], signed).is_err());
+        assert!(digest(GAME_REPO, "v2099.01.01", "other.zip", &keys, signed).is_err());
         // No checksums (a release from before signing): refused, saying so.
         let unsigned = |_: &str| -> Result<Option<Vec<u8>>, String> { Ok(None) };
-        let refused = digest("v2099.01.01", "horizon.zip", &keys, unsigned).unwrap_err();
+        let refused = digest(GAME_REPO, "v2099.01.01", "horizon.zip", &keys, unsigned).unwrap_err();
         assert!(refused.contains("not signed"), "{refused}");
         // Checksums that can't be fetched are an error too, never a pass.
         let offline = |_: &str| -> Result<Option<Vec<u8>>, String> { Err("No connection".into()) };
-        assert!(digest("v2099.01.01", "horizon.zip", &keys, offline).is_err());
+        assert!(digest(GAME_REPO, "v2099.01.01", "horizon.zip", &keys, offline).is_err());
     }
 
     /// The release channel never installs what was signed for a Nightly, whatever tag it is served
@@ -199,11 +202,11 @@ mod tests {
         };
         let nightly = serving(horizon_release_sign::NIGHTLY, VERSION);
         assert_eq!(
-            build_digest("nightly", VERSION, "horizon.zip", &keys, &nightly),
+            build_digest(GAME_REPO, "nightly", VERSION, "horizon.zip", &keys, &nightly),
             Ok(sha256_hex(b"game"))
         );
         // Another version than the one signed (an older Nightly served as tonight's, or the reverse).
-        assert!(build_digest(
+        assert!(build_digest(GAME_REPO, 
             "nightly",
             "nightly-2026-10-29-1111111",
             "horizon.zip",
@@ -213,7 +216,7 @@ mod tests {
         .is_err());
         for tag in ["v0.2.81", "nightly", "nightly-2026-10-27"] {
             assert!(
-                digest(tag, "horizon.zip", &keys, &nightly).is_err(),
+                digest(GAME_REPO, tag, "horizon.zip", &keys, &nightly).is_err(),
                 "{tag}"
             );
         }
@@ -225,21 +228,21 @@ mod tests {
                 nightly(url)
             }
         };
-        let refused = build_digest("nightly", VERSION, "horizon.zip", &keys, old).unwrap_err();
+        let refused = build_digest(GAME_REPO, "nightly", VERSION, "horizon.zip", &keys, old).unwrap_err();
         assert!(refused.contains("SHA256SUMS.v2.sig"), "{refused}");
         let release = serving("v0.2.81", "v0.2.81");
-        assert!(digest("v0.2.81", "horizon.zip", &keys, &release).is_ok());
-        assert!(build_digest("nightly", VERSION, "horizon.zip", &keys, &release).is_err());
+        assert!(digest(GAME_REPO, "v0.2.81", "horizon.zip", &keys, &release).is_ok());
+        assert!(build_digest(GAME_REPO, "nightly", VERSION, "horizon.zip", &keys, &release).is_err());
         // A snapshot installs with its own version's signature; it never passes for a Nightly, nor a
         // Nightly for it, nor a snapshot for a release.
         const SNAPSHOT: &str = "snapshot-2026-10-28-0c02067";
         let snapshot = serving(horizon_release_sign::SNAPSHOT, SNAPSHOT);
         assert_eq!(
-            build_digest(SNAPSHOT, SNAPSHOT, "horizon.zip", &keys, &snapshot),
+            build_digest(GAME_REPO, SNAPSHOT, SNAPSHOT, "horizon.zip", &keys, &snapshot),
             Ok(sha256_hex(b"game"))
         );
-        assert!(build_digest("nightly", VERSION, "horizon.zip", &keys, &snapshot).is_err());
-        assert!(build_digest(SNAPSHOT, SNAPSHOT, "horizon.zip", &keys, &nightly).is_err());
+        assert!(build_digest(GAME_REPO, "nightly", VERSION, "horizon.zip", &keys, &snapshot).is_err());
+        assert!(build_digest(GAME_REPO, SNAPSHOT, SNAPSHOT, "horizon.zip", &keys, &nightly).is_err());
         // A genuine snapshot served under the Nightly's tag: its title is no Nightly's, and its
         // version is refused on the Nightly channel before its (valid) signature is read.
         assert_eq!(
@@ -254,11 +257,11 @@ mod tests {
             title_version(SNAPSHOT, "Snapshot 2026-10-28 · 0c02067").as_deref(),
             Some(SNAPSHOT)
         );
-        assert!(build_digest("nightly", SNAPSHOT, "horizon.zip", &keys, &snapshot).is_err());
-        assert!(build_digest(SNAPSHOT, VERSION, "horizon.zip", &keys, &nightly).is_err());
+        assert!(build_digest(GAME_REPO, "nightly", SNAPSHOT, "horizon.zip", &keys, &snapshot).is_err());
+        assert!(build_digest(GAME_REPO, SNAPSHOT, VERSION, "horizon.zip", &keys, &nightly).is_err());
         for tag in [SNAPSHOT, "snapshot"] {
             assert!(
-                digest(tag, "horizon.zip", &keys, &snapshot).is_err(),
+                digest(GAME_REPO, tag, "horizon.zip", &keys, &snapshot).is_err(),
                 "{tag}"
             );
         }

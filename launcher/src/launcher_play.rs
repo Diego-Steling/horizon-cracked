@@ -349,7 +349,7 @@ impl Launcher {
             let session = if horizon_launcher::developer_offline::enabled(&tag) {
                 Ok(None)
             } else {
-                account::session_for_game(&backend::game_home()).map(Some)
+                account::session_for_game(&backend::game_home(), true).map(Some)
             };
             say("starting the game", tr("Starting the game…"));
             let _ = tx.send(Msg::Session(session));
@@ -368,7 +368,7 @@ impl Launcher {
     pub(crate) fn load_profile_heads(&mut self) {
         let resources = self.game_resources();
         self.profile_heads
-            .request(&self.accounts.accounts, resources, &self.tx);
+            .request(&self.accounts.accounts, &self.accounts.offline, resources, &self.tx);
     }
 
     pub(crate) fn begin_auth_job(&mut self, uuid: &str) -> Option<u64> {

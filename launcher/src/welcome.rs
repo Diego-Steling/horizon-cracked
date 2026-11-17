@@ -10,7 +10,7 @@ impl Launcher {
     /// Whether the welcome covers the window: a first run (the data question not answered yet),
     /// not welcomed before, and the opening over.
     pub(crate) fn welcoming(&self) -> bool {
-        self.opening.is_none() && !self.settings.welcomed && self.collection.consent.needs_asking()
+        self.opening.is_none() && !self.settings.welcomed
     }
 
     /// Escape answers the welcome as Continue does: the look as it is now stays.
@@ -25,47 +25,11 @@ impl Launcher {
 
     pub(crate) fn welcome_screen(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         let t = self.theme;
-        let (rows, ping) = ui::flat_rows(|| {
+        let rows = ui::flat_rows(|| {
             let mut rows = vec![self.launcher_theme_row(cx), self.glass_accent_row(cx)];
             rows.push(self.motion_row(cx));
             rows.extend(self.effects_rows(cx));
-            // Not in the scrolling list: it stays in view above Continue.
-            let detail = div()
-                .flex()
-                .flex_col()
-                .gap(px(6.))
-                .child(tr(
-                    "While you play, the game tells Horizon you're playing, so the launcher can show how many people play right now. It's anonymous, it's on now, and you can turn it off here or in Settings.",
-                ))
-                .child(
-                    div()
-                        .id("welcome-ping-detail")
-                        .text_color(t.accent)
-                        .cursor_pointer()
-                        .hover(|s| s.opacity(0.8))
-                        .child(tr(if self.collection.welcome_detail {
-                            "Hide what's sent"
-                        } else {
-                            "What's sent?"
-                        }))
-                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.collection.welcome_detail = !this.collection.welcome_detail;
-                            cx.notify();
-                        })),
-                )
-                .children(
-                    self.collection
-                        .welcome_detail
-                        .then(|| div().child(tr(telemetry::PING))),
-                );
-            let ping = index_row(
-                0,
-                tr("Count me in as \"playing now\""),
-                Some(detail.into_any_element()),
-                Some(self.ping_switch("welcome-ping", cx).into_any_element()),
-                &t,
-            );
-            (rows, ping)
+            rows
         });
         let head = div()
             .flex()
@@ -85,7 +49,7 @@ impl Launcher {
                     .child(tr("Make Horizon yours")),
             )
             .child(ui::text(14., FontWeight::NORMAL, ink::BODY).child(tr(
-                "Pick a look to start with. The \"I'm playing\" ping is already on; you can turn it off below. You can change all of this later in Settings.",
+                "Pick a look to start with. You can change all of this later in Settings.",
             )));
         let body = div()
             .id("welcome-body")
@@ -112,24 +76,11 @@ impl Launcher {
                 ),
             ));
         let body = self
-            .collection
             .welcome_scroll
             .wrap(body, &t)
             .flex_1()
             .min_h_0()
             .child(fade);
-        // Pinned between the scrolling list and the buttons, so it is seen before Continue.
-        let ping = div()
-            .flex()
-            .flex_col()
-            .flex_none()
-            .max_h(px(280.))
-            .overflow_hidden()
-            .px(px(16.))
-            .py(px(8.))
-            .border_t_1()
-            .border_color(white(0.1))
-            .child(ping);
         let foot = div()
             .flex()
             .flex_none()
@@ -190,7 +141,6 @@ impl Launcher {
             .max_h(px(700.))
             .child(head)
             .child(body)
-            .child(ping)
             .child(foot);
         div()
             .id("welcome")

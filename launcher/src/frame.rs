@@ -71,9 +71,6 @@ const RAIL_MOTION: horizon_theme::Motion = horizon_theme::Motion {
     ms: 320,
     curve: [0.22, 0.9, 0.3, 1.08],
 };
-/// Discord's own blurple, in every theme, and under the pointer.
-const DISCORD: u32 = 0x5865F2;
-const DISCORD_HOVER: u32 = 0x4752C4;
 
 /// The rail's state: whether the pointer is on it, and where its last opening or shutting began.
 #[derive(Default)]
@@ -679,92 +676,11 @@ impl Launcher {
         };
         if open {
             foot = foot.children(self.rail_update_card(soft, cx));
-            // Sculk's card (a sponsor), only where the rail is wide enough to show it.
-            // When the instances already overflow the rail, the list keeps the room.
-            if !self.settings.partner_hidden && p > 0.98 && !overflows {
-                let free = f32::from(window.viewport_size().height) - 420. - 52. * rows as f32;
-                let mut side = div().relative().mb(px(6.)).child(partner::card(
-                    "partner-side",
-                    RAIL_OPEN - 24.,
-                    free < partner::TALL_HEIGHT,
-                    &t,
-                ));
-                if self.settings.partner_seen_secs >= partner::SEEN_BEFORE_HIDE {
-                    side = side.child(partner::hide_button("partner-hide", &t).on_click(
-                        cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.settings.partner_hidden = true;
-                            this.save_settings();
-                            cx.notify();
-                        }),
-                    ));
-                }
-                foot = foot.child(side);
-            }
         }
 
-        // Discord keeps its own blurple in every theme, as the icon at rest and the fill under the
-        // pointer, so it never reads as the selected page. No pulse.
-        if !self.links.discord.is_empty() {
-            let url = self.links.discord.clone();
-            let did = SharedString::from("discord");
-            let hovered = crate::hover_is(&did);
-            foot = foot.child(keyboard(
-                track_hover(
-                    div()
-                        .id(did.clone())
-                        .relative()
-                        .flex()
-                        .flex_none()
-                        .items_center()
-                        .gap(px(12.))
-                        .w_full()
-                        .h(px(42.))
-                        .mb(px(4.))
-                        .px(px(17.5))
-                        .rounded(px(radius::ROW))
-                        .when(hovered, |d| d.bg(ui::color(DISCORD_HOVER)))
-                        .cursor_pointer()
-                        .child(ui::icon(
-                            "discord",
-                            19.,
-                            if hovered {
-                                gpui::white()
-                            } else {
-                                ui::color(DISCORD)
-                            },
-                        ))
-                        .child(
-                            fade(ui::text(14., FontWeight::SEMIBOLD, 1.))
-                                .text_color(if hovered {
-                                    gpui::white()
-                                } else {
-                                    white(ink::STRONG)
-                                })
-                                .whitespace_nowrap()
-                                .child(tr("Join the Discord")),
-                        )
-                        .when(!open, |d| d.tooltip(ui::tip(tr("Join the Discord"))))
-                        .on_click(move |_, _, cx| cx.open_url(&url)),
-                    did,
-                ),
-                &t,
-            ));
-        }
         let links = [
-            (
-                "sponsor",
-                tr("Sponsor"),
-                "favourite",
-                self.links.sponsor.clone(),
-            ),
             ("roadmap", tr("Roadmap"), "map", self.links.roadmap.clone()),
             ("docs", tr("Documentation"), "book", self.links.docs.clone()),
-            (
-                "website",
-                tr("Website"),
-                "globe-02",
-                self.links.website.clone(),
-            ),
         ];
         // While the instances overflow, the links fold into one row the player can open.
         let folded = overflows && !self.rail.links_open;
@@ -822,6 +738,7 @@ impl Launcher {
         };
         foot = foot.child(rule()).child(
             div()
+                .id("launcher-version-wrap")
                 .flex()
                 .items_center()
                 .h(px(20.))
@@ -839,7 +756,11 @@ impl Launcher {
                                 &[("version", backend::VERSION)],
                             )))
                         }),
-                ),
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.version_clicked();
+                    cx.notify();
+                })),
         );
 
         let width = RAIL + (RAIL_OPEN - RAIL) * p;
@@ -1009,11 +930,15 @@ impl Launcher {
         let strip = self.nav_strip.render(tabs, &t, performance, window);
 
         let (name, how) = self.who_plays();
-        let face = self.accounts.selected().map(|a| a.uuid.clone());
+        let face = match self.accounts.player() {
+            account::Player::Microsoft(uuid) => Some(uuid),
+            account::Player::Offline(name) => Some(profile_heads::offline_key(&name)),
+            account::Player::GameName => None,
+        };
         let open = self.account_menu;
         // Signed out, the chip is only the face: the Sign in with Microsoft button beside it
         // says it once, and the page tabs keep their room.
-        let signed_in = face.is_some() && !tight;
+        let signed_in = !tight;
         let chip =
             div()
                 .id("account")
@@ -1075,36 +1000,6 @@ impl Launcher {
             .child(keyboard(chip, &t))
             .children(self.glass_account_menu(cx));
 
-        // Signing in with Microsoft, while nobody is: the mockup's button.
-        let sign_in = self.accounts.selected().is_none().then(|| {
-            keyboard(
-                div()
-                    .id("topbar-sign-in")
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .h(px(44.))
-                    .px(px(if tight { 14. } else { 16. }))
-                    .rounded(px(radius::ROW))
-                    .bg(white(fill::BUTTON))
-                    .hover(|s| s.bg(white(fill::BUTTON_HOVER)))
-                    .cursor_pointer()
-                    .child(microsoft::logo(16.))
-                    .when(!tight, |d| {
-                        d.child(
-                            ui::text(14., FontWeight::MEDIUM, ink::FULL)
-                                .child(tr("Sign in with Microsoft")),
-                        )
-                    })
-                    .when(tight, |d| d.tooltip(ui::tip(tr("Sign in with Microsoft"))))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.start_sign_in();
-                        cx.notify();
-                    })),
-                &t,
-            )
-        });
         // Search: the palette (⌘K or Ctrl+K anywhere), as a field-shaped button.
         let sid = SharedString::from("topbar-search");
         let key: &str = if cfg!(target_os = "macos") {
@@ -1186,8 +1081,7 @@ impl Launcher {
                     .items_center()
                     .gap(px(8.))
                     .child(search)
-                    .child(account)
-                    .children(sign_in),
+                    .child(account),
             )
     }
 
@@ -1198,7 +1092,7 @@ impl Launcher {
         }
         let t = self.theme;
         let soft = self.look.accent_soft;
-        let now = self.accounts.selected().map(|a| a.uuid.clone());
+        let now = self.accounts.player();
         let mut menu = ui::popover(250.)
             .id("account-menu")
             .occlude()
@@ -1208,8 +1102,13 @@ impl Launcher {
                 cx.notify();
             }));
         for (i, (who, name, how)) in self.players().into_iter().enumerate() {
-            let chosen = Some(&who) == now.as_ref();
+            let chosen = who == now;
             let id = SharedString::from(format!("account-pick-{i}"));
+            let head_key = match &who {
+                account::Player::Microsoft(uuid) => Some(uuid.clone()),
+                account::Player::Offline(name) => Some(profile_heads::offline_key(name)),
+                account::Player::GameName => None,
+            };
             menu = menu.child(keyboard(
                 track_hover(
                     div()
@@ -1230,7 +1129,7 @@ impl Launcher {
                                 .rounded(px(8.))
                                 .overflow_hidden()
                                 .child(self.profile_heads.draw(
-                                    Some(who.as_str()),
+                                    head_key.as_deref(),
                                     30.,
                                     self.scale,
                                     &t,
@@ -1254,7 +1153,7 @@ impl Launcher {
                             d.child(ui::icon("tick-02", 16., ui::color(soft)).relative())
                         })
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.play_as(&who);
+                            this.play_as(who.clone());
                             cx.notify();
                         })),
                     id,

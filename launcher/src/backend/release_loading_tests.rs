@@ -164,8 +164,9 @@ fn empty_or_prebuilt_only_fork_has_no_game_or_launcher_update() {
                 Vec::new,
                 |list| {
                     launcher_releases_in_with(list, |url| {
+                        let expected = format!("https://api.github.com/repos/{}/", crate::backend::REPO);
                         assert!(
-                            url.starts_with("https://api.github.com/repos/horizon-rust/horizon/")
+                            url.starts_with(&expected)
                         );
                         Ok(missing.clone())
                     })
@@ -279,7 +280,7 @@ fn decoy_asset_names_never_replace_the_exact_platform_asset() {
     );
     assert!(draft.is_empty());
     assert_eq!(
-        crate::signed::asset_url("../../x", "../evil.zip"),
+        crate::signed::asset_url(crate::backend::GAME_REPO, "../../x", "../evil.zip"),
         "https://github.com/horizon-rust/horizon/releases/download/..%2F..%2Fx/..%2Fevil.zip"
     );
 }

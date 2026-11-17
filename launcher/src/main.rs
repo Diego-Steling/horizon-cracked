@@ -19,7 +19,6 @@ mod blocks;
 mod build_mode;
 mod cli;
 mod cli_tools;
-mod collection;
 mod console;
 mod console_page;
 mod cull;
@@ -75,11 +74,11 @@ mod new_instance;
 mod notes_cache;
 mod owner_page;
 mod packs_page;
-mod partner;
 mod perf;
 mod picture_cache;
 mod plate;
 mod play_step;
+mod dev_options;
 mod profile_heads;
 mod screenshots_page;
 mod scrollbar;
@@ -88,6 +87,7 @@ mod servers_page;
 mod setup_page;
 mod shell;
 mod shortcut_page;
+mod skin_page;
 mod specimen;
 mod sticky;
 mod switch_page;
@@ -114,7 +114,6 @@ use horizon_launcher::instances;
 use horizon_launcher::native_mods;
 use horizon_launcher::native_status;
 use horizon_launcher::storage;
-use horizon_launcher::telemetry;
 use native_consent::PendingConsent;
 use scrollbar::Scrollbar;
 use std::borrow::Cow;
@@ -245,7 +244,12 @@ struct Launcher {
     behind: Page,
     /// How many times the page changed, for the page transition.
     switches: usize,
+    pub(crate) skin: Option<skin_page::SkinPanel>,
+    pub(crate) dev_clicks: u8,
+    pub(crate) dev_options: bool,
+    pub(crate) offline_name: Option<String>,
     content_scroll: Scrollbar,
+    welcome_scroll: Scrollbar,
     /// The top bar's page tabs, including their horizontal overflow controls.
     nav_strip: nav_strip::NavStrip,
     /// The glass Settings page's own scroll: its sections beside their list.
@@ -409,7 +413,7 @@ struct Launcher {
     settings: Settings,
     /// The last failed settings write, kept across page changes until a save succeeds.
     settings_save_error: Option<String>,
-    /// The Discord, sponsor and website links: built in until links.json on main has been read.
+    /// The Discord and website links: built in until links.json on main has been read.
     links: backend::Links,
     preparing: bool,
     prepare_log: VecDeque<String>,
@@ -486,14 +490,8 @@ struct Launcher {
     proxy_input: line_edit::LineEdit,
     proxy_focused: bool,
     proxy_focus: FocusHandle,
-    /// Opt-in data collection: the player's answer and Settings' section (`collection`).
-    collection: collection::Collection,
     /// Settings' "Connect an AI agent" (`agents_page`).
     agents: agents_page::AgentsUi,
-    /// How many play Horizon now, while the server answers ("N playing now" on the Play page).
-    playing: Option<u64>,
-    /// How many play on the official server now, while it answers ("M on the official SMP").
-    official_players: Option<u64>,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
     _appearance: Subscription,
@@ -600,11 +598,10 @@ struct Launcher {
 
 actions!(horizon_launcher, [Quit, CloseWindow]);
 
-/// What closing the last window does: stop the servers this launcher started, send the telemetry,
-/// exit. A game that is running keeps running. Cmd+Q goes through here too.
+/// What closing the last window does: stop the servers this launcher started, exit. A game that
+/// is running keeps running. Cmd+Q goes through here too.
 fn shut_down(cx: &mut App) {
     servers_page::stop_on_quit();
-    telemetry::send_before_exit();
     // A downloaded launcher update goes in only when the player presses Update: closing drops it.
     horizon_launcher::update_handoff::forget();
     cx.quit()
@@ -660,6 +657,20 @@ fn main() {
 /// A keyboard click never did.
 fn closed_by_press(closed_at: Option<Point<Pixels>>, event: &ClickEvent) -> bool {
     matches!(event, ClickEvent::Mouse(click) if closed_at == Some(click.down.position))
+}
+
+pub(crate) fn offline_name() -> Option<String> {
+    player_name(&std::fs::read_to_string(backend::game_home().join("horizon-player.txt")).ok()?)
+}
+
+/// The name in `horizon-player.txt`: the game writes `name:Player12345` (horizon-client's
+/// offline_name.rs).
+pub(crate) fn player_name(text: &str) -> Option<String> {
+    text.lines()
+        .find_map(|line| line.trim().strip_prefix("name:"))
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(str::to_owned)
 }
 
 #[cfg(test)]

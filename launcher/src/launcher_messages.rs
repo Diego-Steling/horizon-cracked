@@ -42,9 +42,8 @@ impl Launcher {
                     self.notes.clear();
                 }
                 Msg::Links(links) => {
-                    // The official server may have moved: its list entry and its count follow.
+                    // The server list may have moved: it is read again.
                     self.multiplayer.stale();
-                    telemetry::set_official_server(&links.official_server);
                     self.links = links;
                 }
                 // The page reads is_prepared when drawn; `changed` redraws it.
@@ -93,8 +92,6 @@ impl Launcher {
                         Err(e) => self.sign_in_state = Some(SignInState::Done(Err(e))),
                     }
                 }
-                Msg::Playing(playing) => self.playing = playing,
-                Msg::OfficialPlayers(players) => self.official_players = players,
                 Msg::JavaGame(id, home, cmd) => {
                     self.starting_client = None;
                     self.starting_instance = None;

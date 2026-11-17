@@ -142,7 +142,6 @@ impl Launcher {
             },
         ));
         let items = self.instance_items(heading, cx);
-        let mut rows = items.len();
         let list = div()
             .flex()
             .flex_col()
@@ -158,8 +157,6 @@ impl Launcher {
         if !servers.is_empty() {
             list = list.child(heading(tr("SERVERS").into()));
         }
-        rows += servers.len();
-        let headings = 1 + usize::from(!servers.is_empty());
         for e in servers {
             let up = self.servers.is_up(&e.dir);
             let open = self.page == Page::Servers && self.servers.open.as_ref() == Some(&e.dir);
@@ -306,50 +303,6 @@ impl Launcher {
             }
             _ => {}
         }
-        // Sculk's card above the links: seen without scrolling, on every page but Servers, which shows
-        // its wide banner. Tall where the sidebar has the height for it besides the wordmark, its rows
-        // (52 high each, under headings of 40) and the links, compact otherwise. After a while on
-        // screen a "Hide" beside its label puts it away for good.
-        if self.page != Page::Servers && !self.settings.partner_hidden {
-            let free = f32::from(window.viewport_size().height)
-                - theme::TOPBAR
-                - 40. * headings as f32
-                - 52. * rows as f32
-                - 110.;
-            let mut side = div().relative().mb(px(8.)).child(partner::card(
-                "partner-side",
-                theme::SIDEBAR - 20.,
-                free < partner::TALL_HEIGHT,
-                &t,
-            ));
-            if self.settings.partner_seen_secs >= partner::SEEN_BEFORE_HIDE {
-                let hide = partner::hide_button("partner-hide", &t).on_click(cx.listener(
-                    |this, _: &ClickEvent, _, cx| {
-                        this.settings.partner_hidden = true;
-                        this.save_settings();
-                        cx.notify();
-                    },
-                ));
-                side = side.child(hide);
-            }
-            foot = foot.child(side);
-        }
-        if !self.links.sponsor.is_empty() {
-            foot = foot.child(link(
-                "sponsor",
-                tr("Sponsor"),
-                "heart",
-                self.links.sponsor.clone(),
-            ));
-        }
-        if !self.links.discord.is_empty() {
-            foot = foot.child(link(
-                "discord",
-                "Discord",
-                "message",
-                self.links.discord.clone(),
-            ));
-        }
         if !self.links.roadmap.is_empty() {
             foot = foot.child(link(
                 "roadmap",
@@ -366,20 +319,16 @@ impl Launcher {
                 self.links.docs.clone(),
             ));
         }
-        if !self.links.website.is_empty() {
-            foot = foot.child(link(
-                "website",
-                tr("Website"),
-                "globe",
-                self.links.website.clone(),
-            ));
-        }
         foot = foot.child(
             shell::text(theme::night::CAPTION, shell::c(n.muted))
                 .id("launcher-version")
                 .px(px(8.))
                 .pt(px(6.))
-                .child(trf("Launcher {version}", &[("version", backend::VERSION)])),
+                .child(trf("Launcher {version}", &[("version", backend::VERSION)]))
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.version_clicked();
+                    cx.notify();
+                })),
         );
         // Custom title bars carry the mark and name already.
         let brand = (!titlebar::draws_brand(window)).then(|| {

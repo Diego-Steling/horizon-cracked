@@ -140,8 +140,33 @@ enum AccountCmd {
         /// Its name or UUID
         who: String,
     },
-    /// Play as this account
+    /// Play as this account, or as one of your offline names
     Select { who: String },
+    /// Play offline (LAN, offline-mode servers) beside a signed-in account that owns the game:
+    /// as NAME (kept to switch back to; 3 to 16 letters, digits or _), or as the name the game
+    /// made up
+    Offline { name: Option<String> },
+    /// Forget one of your offline names; its skin and cape go with it
+    ForgetOffline { name: String },
+    /// Show or set an offline name's skin and cape: a 64x64 (or 64x32) skin PNG, a 64x32 cape
+    /// PNG, the model. Kept by the launcher and given to the game when that name plays
+    Skin {
+        name: String,
+        /// The skin's PNG
+        file: Option<PathBuf>,
+        /// classic or slim arms
+        #[arg(long)]
+        model: Option<String>,
+        /// The cape's PNG
+        #[arg(long)]
+        cape: Option<PathBuf>,
+        /// Back to the default skin
+        #[arg(long)]
+        no_skin: bool,
+        /// Take the cape off
+        #[arg(long)]
+        no_cape: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1529,23 +1554,26 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 after_exit(&instance, &vars);
                 return played;
             }
-            // Who plays this launch only.
+            // Who plays this launch; the accounts below choose it in memory only, for its
+            // `--name` and look.
+            let mut accounts = Accounts::load();
             let who = match account {
-                Some(who) => Some(
-                    Accounts::load()
+                Some(who) => Some(account::Player::Microsoft(
+                    accounts
                         .find(&who)
                         .ok_or_else(|| {
                             format!("No signed-in account {who}. See `horizon-launcher account`.")
                         })?
                         .uuid
                         .clone(),
-                ),
+                )),
                 None => None,
             };
-            let mut cmd = backend::client_as(
-                &instance.resolve_version(version.as_deref())?,
-                who.as_deref(),
-            )?;
+            if let Some(who) = &who {
+                accounts.play_as(account::store(), who.clone())?;
+            }
+            let mut cmd =
+                backend::client_as(&instance.resolve_version(version.as_deref())?, who.as_ref())?;
             instances::apply(&mut cmd, &instance)?;
             if let Some(code) = join {
                 backend::join_friend(&mut cmd, &code)?;
@@ -1562,6 +1590,9 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 cmd.arg("--creative");
             }
             cmd.args(arg);
+            if let Some(name) = accounts.name_arg() {
+                cmd.arg("--name").arg(name);
+            }
             let started = std::time::Instant::now();
             let vars = instance.vars(cmd.get_program());
             cmd.envs(vars.iter().map(|(k, v)| (k, v)));
@@ -1632,7 +1663,6 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                     ("Roadmap", &links.roadmap),
                     ("Documentation", &links.docs),
                     ("Discord", &links.discord),
-                    ("Sponsor", &links.sponsor),
                 ] {
                     println!("{name:<8} {}", if url.is_empty() { "(none)" } else { url });
                 }
@@ -2068,85 +2098,105 @@ fn account_command(action: AccountCmd, as_json: bool) -> Result<(), String> {
             println!("Signed out {}.", a.name);
         }
         AccountCmd::Select { who } => {
-            let a = find(&accounts, &who)?;
-            accounts.play_as(&a.uuid)?;
+            let a = accounts
+                .find(&who)
+                .map(|a| account::Player::Microsoft(a.uuid.clone()))
+                .or_else(|| {
+                    accounts
+                        .offline
+                        .iter()
+                        .find(|n| n.eq_ignore_ascii_case(&who))
+                        .map(|n| account::Player::Offline(n.clone()))
+                })
+                .ok_or_else(|| format!("No account or offline name {who}"))?;
+            accounts.play_as(account::store(), a)?;
             accounts.save()?;
-            println!("The game plays as {}.", a.name);
+            match accounts.name_arg() {
+                Some(n) => println!("The game plays as {n}."),
+                None => println!("The game plays as the selected account."),
+            }
+        }
+        AccountCmd::Offline { name } => {
+            let player = match name {
+                Some(n) => account::Player::Offline(n),
+                None => account::Player::GameName,
+            };
+            accounts.play_as(account::store(), player)?;
+            accounts.save()?;
+            match accounts.name_arg() {
+                Some(n) => println!("The game plays offline as {n}."),
+                None => println!("The game plays offline, as the name it made up."),
+            }
+        }
+        AccountCmd::Skin {
+            name,
+            file,
+            model,
+            cape,
+            no_skin,
+            no_cape,
+        } => {
+            use horizon_launcher::skins::{self, Model};
+            let name = accounts
+                .offline
+                .iter()
+                .find(|n| n.eq_ignore_ascii_case(&name))
+                .cloned()
+                .ok_or_else(|| {
+                    format!("No offline name {name}: add it with `account offline {name}`.")
+                })?;
+            let model = match model.as_deref() {
+                None => None,
+                Some("classic") => Some(Model::Classic),
+                Some("slim") => Some(Model::Slim),
+                Some(m) => return Err(format!("{m}: say classic or slim")),
+            };
+            let mut look = accounts.look(&name);
+            if let Some(file) = &file {
+                skins::keep(&skins::dir(), &name, file, false)?;
+                look.skin = true;
+            }
+            if let Some(file) = &cape {
+                skins::keep(&skins::dir(), &name, file, true)?;
+                look.cape = true;
+            }
+            if let Some(m) = model {
+                look.model = m;
+            }
+            look.skin &= !no_skin;
+            look.cape &= !no_cape;
+            accounts
+                .looks
+                .insert(name.to_ascii_lowercase(), look.clone());
+            accounts.save()?;
+            if as_json {
+                json(serde_json::json!({
+                    "name": name, "skin": look.skin, "cape": look.cape, "model": look.model.name(),
+                }));
+            } else {
+                let say = |on: bool, what: &str| if on { what.to_string() } else { "none".into() };
+                println!(
+                    "{name}: skin {} ({} arms), cape {}",
+                    say(look.skin, "kept"),
+                    look.model.name(),
+                    say(look.cape, "kept")
+                );
+            }
+        }
+        AccountCmd::ForgetOffline { name } => {
+            accounts.remove_offline(&name, &horizon_launcher::skins::dir())?;
+            accounts.save()?;
+            println!("Forgot the offline name {name}.");
         }
     }
     Ok(())
 }
-/// `data`: the same consent as Settings → Data collection.
-fn data(action: DataCmd, as_json: bool) -> Result<(), String> {
-    use horizon_launcher::telemetry;
-    let review = |item: &horizon_telemetry::Item, yes: bool| -> Result<bool, String> {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(item).map_err(|e| e.to_string())?
-        );
-        if yes {
-            return Ok(true);
-        }
-        if !std::io::stdin().is_terminal() {
-            return Err("Add --yes to send it without asking.".into());
-        }
-        eprint!("Send this? [y/N] ");
-        let mut line = String::new();
-        std::io::stdin()
-            .read_line(&mut line)
-            .map_err(|e| e.to_string())?;
-        Ok(line.trim().eq_ignore_ascii_case("y"))
-    };
-    match action {
-        DataCmd::Status => {
-            let status = telemetry::status_json();
-            if as_json {
-                json(status);
-                return Ok(());
-            }
-            let consent = telemetry::consent();
-            if consent.needs_asking() {
-                println!("Not answered yet: nothing is collected.");
-            }
-            for (kind, name, _, _) in telemetry::SWITCHES {
-                let on = consent.allows(kind);
-                println!("{name}: {}", if on { "on" } else { "off" });
-            }
-            println!("Waiting to be sent: {}", status["waiting"]);
-            match horizon_telemetry::endpoint() {
-                Some(url) => println!("Server: {url}"),
-                None => println!("Server: turned off (HORIZON_TELEMETRY_URL=off), nothing is sent"),
-            }
-        }
-        DataCmd::Allow { kinds } => {
-            telemetry::set(&telemetry::parse_kinds(&kinds)?, true)?;
-            return data(DataCmd::Status, as_json);
-        }
-        DataCmd::Deny { kinds } => {
-            telemetry::set(&telemetry::parse_kinds(&kinds)?, false)?;
-            return data(DataCmd::Status, as_json);
-        }
-        DataCmd::Show => {
-            let (what, text) = telemetry::preview();
-            eprintln!("{what}");
-            println!("{text}");
-        }
-        DataCmd::Delete => println!("{}", telemetry::delete_my_data()?),
-        DataCmd::Send => println!("{:?}", telemetry::send()),
-        DataCmd::Bug { text, log, yes } => {
-            telemetry::ensure_allowed(horizon_telemetry::Kind::Bug)?;
-            let item = telemetry::bug_report(&text, log)?;
-            if review(&item, yes)? {
-                println!("{}", telemetry::submit(&item)?);
-            }
-        }
-        DataCmd::Benchmark { file, yes } => {
-            telemetry::ensure_allowed(horizon_telemetry::Kind::Benchmark)?;
-            let item = telemetry::benchmark_report(&file)?;
-            if review(&item, yes)? {
-                println!("{}", telemetry::submit(&item)?);
-            }
-        }
+/// `data`: disabled in this build.
+fn data(_action: DataCmd, as_json: bool) -> Result<(), String> {
+    if as_json {
+        json(serde_json::json!({ "telemetry": "disabled", "status": "off" }));
+    } else {
+        println!("Telemetry and data collection are completely disabled in this build.");
     }
     Ok(())
 }

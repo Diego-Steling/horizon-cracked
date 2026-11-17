@@ -135,8 +135,9 @@ pub(crate) fn mirror_url(url: &str) -> Option<String> {
 
 fn mirror_url_with(url: &str, base: &str) -> Option<String> {
     let path = url.strip_prefix(API)?;
-    let repo = format!("/repos/{}/", backend::REPO);
-    (!base.is_empty() && path.starts_with(&repo))
+    let our_repo = format!("/repos/{}/", backend::REPO);
+    let game_repo = format!("/repos/{}/", backend::GAME_REPO);
+    (!base.is_empty() && (path.starts_with(&our_repo) || path.starts_with(&game_repo)))
         .then(|| format!("{}{path}", base.trim_end_matches('/')))
 }
 

@@ -24,30 +24,6 @@ impl Launcher {
             }
         })
         .detach();
-        // Counts the time a partner banner is on screen, until it may be hidden.
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_secs(10))
-                .await;
-            let counting = this.update(cx, |this, cx| {
-                let s = &mut this.settings;
-                if s.partner_hidden || s.partner_seen_secs >= partner::SEEN_BEFORE_HIDE {
-                    return false;
-                }
-                // On screen on every page: the card in the sidebar, the banner on Servers.
-                s.partner_seen_secs += 10;
-                if s.partner_seen_secs % 60 == 0 || s.partner_seen_secs >= partner::SEEN_BEFORE_HIDE
-                {
-                    this.save_settings();
-                    cx.notify();
-                }
-                true
-            });
-            if !matches!(counting, Ok(true)) {
-                break;
-            }
-        })
-        .detach();
         let mut settings = Settings::load();
         i18n::set(settings.language());
         if settings.minecraft_dir.is_none() {
@@ -87,6 +63,11 @@ impl Launcher {
             behind: Page::Play,
             switches: 0,
             content_scroll: Scrollbar::default(),
+            welcome_scroll: Scrollbar::default(),
+            skin: None,
+            dev_clicks: 0,
+            dev_options: false,
+            offline_name: offline_name(),
             nav_strip: nav_strip::NavStrip::default(),
             settings_pane: gpui::ScrollHandle::new(),
             settings_query: line_edit::LineEdit::new(String::new(), 80, 40),
@@ -234,10 +215,7 @@ impl Launcher {
             quick_play: None,
             client_run: None,
             client_vars: Vec::new(),
-            collection: collection::Collection::load(),
             agents: agents_page::AgentsUi::default(),
-            playing: None,
-            official_players: None,
             tx,
             rx,
             _appearance: appearance,
@@ -358,11 +336,7 @@ impl Launcher {
         {
             this.wardrobe_preview();
         }
-        // What the game and the launcher kept, if the player allows it and there is a server.
         this.mod_preview_from_env();
-        telemetry::send_in_background();
-        telemetry::watch_playing(this.tx.clone());
-        telemetry::watch_official(this.tx.clone());
         this
     }
 
@@ -416,6 +390,7 @@ impl Launcher {
     pub(crate) fn go(&mut self, page: Page) {
         // The CLI or another window may have changed the accounts: read them again (a small
         // file, once a switch).
+        self.offline_name = offline_name();
         self.accounts = Accounts::load();
         // Each check reads the keychain (a prompt on macOS): page switches check every account
         // at most once a minute, and an account added meanwhile at once.

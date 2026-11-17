@@ -10,16 +10,21 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
-/// Authority for game, launcher and native SDK release reads on this fork.
-pub const REPO: &str = "horizon-rust/horizon";
+/// The game's releases, signed checksums and Nightlies: the upstream repository. Its archives are
+/// the ones signed with Horizon's release keys.
+pub const GAME_REPO: &str = "horizon-rust/horizon";
+/// This launcher's own releases and updates: the fork.
+pub const REPO: &str = "Diego-Steling/horizon-cracked";
 
 /// Where a crash is reported.
 pub fn issues_url() -> String {
     format!("https://github.com/{REPO}/issues")
 }
-pub const README_URL: &str = "https://github.com/horizon-rust/horizon/blob/main/launcher/README.md";
-/// The players' page on connecting an AI agent (the website's docs/agents.md).
-pub const AGENT_DOCS_URL: &str = "https://playhorizon.dev/docs/agents";
+pub const README_URL: &str =
+    "https://github.com/Diego-Steling/horizon-cracked/blob/main/launcher/README.md";
+/// The players' page on connecting an AI agent.
+pub const AGENT_DOCS_URL: &str =
+    "https://github.com/Diego-Steling/horizon-cracked/blob/main/docs/agent-control.md";
 /// This launcher's version: the release workflow sets `HORIZON_LAUNCHER_VERSION` from the
 /// tag it builds (no version-bump commits); other builds say Cargo.toml's.
 pub const VERSION: &str = version_or(option_env!("HORIZON_LAUNCHER_VERSION"));
@@ -649,13 +654,25 @@ pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
     release_order(a).cmp(&release_order(b))
 }
 
-/// Every published release of the repository, both kinds, as GitHub's JSON (kept on disk with its
-/// ETag, and read through Kira's mirror past GitHub's rate limit: [`crate::github`]).
+/// Every published release of the game and of this launcher, both kinds, as GitHub's JSON (kept
+/// on disk with its ETag, and read through Kira's mirror past GitHub's rate limit:
+/// [`crate::github`]). The game comes from the upstream repository, whose releases are the signed
+/// ones; the launcher's updates come from this fork. Each entry keeps the repository its files
+/// come from (`_repo`), which [`parse_releases`] reads.
 fn release_list() -> Result<serde_json::Value, String> {
-    Ok(crate::github::json_optional(&format!(
-        "https://api.github.com/repos/{REPO}/releases?per_page=100"
-    ))?
-    .unwrap_or_else(|| serde_json::json!([])))
+    let mut all = Vec::new();
+    for repo in [GAME_REPO, REPO] {
+        let list = crate::github::json_optional(&format!(
+            "https://api.github.com/repos/{repo}/releases?per_page=100"
+        ))?;
+        for mut release in list.as_ref().and_then(|v| v.as_array()).cloned().unwrap_or_default() {
+            if let Some(object) = release.as_object_mut() {
+                object.insert("_repo".into(), repo.into());
+            }
+            all.push(release);
+        }
+    }
+    Ok(serde_json::Value::Array(all))
 }
 
 /// The releases in `list` whose tag passes `keep`, newest first, with the asset named `asset`.
@@ -672,8 +689,16 @@ pub(crate) fn parse_releases(
         }
         let found = r["assets"].as_array().into_iter().flatten().find_map(|a| {
             let name = a["name"].as_str()?;
-            (Some(name) == asset)
-                .then(|| Some((crate::signed::asset_url(tag, name), a["size"].as_u64()?)))?
+            (Some(name) == asset).then(|| {
+                Some((
+                    crate::signed::asset_url(
+                        r["_repo"].as_str().unwrap_or(GAME_REPO),
+                        tag,
+                        name,
+                    ),
+                    a["size"].as_u64()?,
+                ))
+            })?
         });
         out.push(Release {
             tag: tag.into(),
@@ -825,23 +850,16 @@ pub fn installable_updates(releases: &[Release]) -> Vec<Release> {
 /// How often a launcher left open looks for new releases: they come out several times a day.
 pub const CHECK_EVERY: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 
-/// The community, sponsor and website links and the official server's address, from
-/// `launcher/links.json` on main, so they can change without a launcher release. An empty address
-/// hides its button (an empty `official_server`: no official server offered).
+/// The community and website links, from `launcher/links.json` on main, so they can change
+/// without a launcher release. An empty one hides its button.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Links {
     pub discord: String,
-    pub sponsor: String,
     pub website: String,
     /// A roadmap page (empty: no button).
     pub roadmap: String,
     /// The modding book.
     pub docs: String,
-    /// The official server's address, as servers.dat lists it (`server_list::add_official`).
-    pub official_server: String,
-    /// The addresses it had before: a list holding one moves to `official_server`. A move appends
-    /// the old address here.
-    pub official_server_previous: Vec<String>,
 }
 
 impl Default for Links {
@@ -860,25 +878,12 @@ impl Links {
         if let Ok(serde_json::Value::Object(map)) = serde_json::from_str(text) {
             for (key, slot) in [
                 ("discord", &mut links.discord),
-                ("sponsor", &mut links.sponsor),
                 ("website", &mut links.website),
                 ("roadmap", &mut links.roadmap),
                 ("docs", &mut links.docs),
-                ("official_server", &mut links.official_server),
             ] {
                 if let Some(url) = map.get(key).and_then(|v| v.as_str()) {
                     *slot = url.trim().to_string();
-                }
-            }
-            // A list of addresses; anything else keeps the built-in one.
-            if let Some(serde_json::Value::Array(previous)) = map.get("official_server_previous") {
-                if previous.iter().all(serde_json::Value::is_string) {
-                    links.official_server_previous = previous
-                        .iter()
-                        .filter_map(|a| a.as_str())
-                        .map(|a| a.trim().to_string())
-                        .filter(|a| !a.is_empty())
-                        .collect();
                 }
             }
         }
@@ -1055,11 +1060,12 @@ pub(crate) fn fetch_small(url: &str) -> Result<Option<Vec<u8>>, String> {
 }
 
 /// The SHA-256 the release's signed checksums give for `asset`, or why it must not be installed.
-fn signed_digest(tag: &str, asset: &str) -> Result<String, String> {
+fn signed_digest(repo: &str, tag: &str, asset: &str) -> Result<String, String> {
     crate::signed::digest(
+        repo,
         tag,
         asset,
-        &horizon_release_sign::trusted_keys_for(REPO),
+        &horizon_release_sign::trusted_keys_for(repo),
         fetch_small,
     )
 }
@@ -1181,14 +1187,15 @@ pub fn install(release: &Release, progress: impl Fn(f32)) -> Result<(), String> 
                     )
                 })?;
             crate::signed::build_digest(
+                GAME_REPO,
                 github_tag,
                 &version,
                 asset,
-                &horizon_release_sign::trusted_keys_for(REPO),
+                &horizon_release_sign::trusted_keys_for(GAME_REPO),
                 fetch_small,
             )?
         }
-        None if is_game_tag(tag) => signed_digest(tag, asset)?,
+        None if is_game_tag(tag) => signed_digest(GAME_REPO, tag, asset)?,
         None => return Err(format!("{tag} is not a Horizon release.")),
     };
     install_as(
@@ -2817,7 +2824,6 @@ pub fn client_command(tag: &str) -> Command {
     }
     crate::run_leases::mark(&mut cmd, &version_dir(tag));
     strip_launcher_render_env(&mut cmd);
-    crate::telemetry::ping_only_if_allowed(&mut cmd, !Settings::load().ping_off);
     cmd.current_dir(&home)
         .env("HORIZON_HOME", &home)
         .env_remove("HORIZON_ACCOUNT_SESSIONS")
@@ -3831,7 +3837,7 @@ pub fn stage_update(release: &Release, progress: impl Fn(f32)) -> Result<Option<
     {
         return Ok(None);
     }
-    let sha256 = signed_digest(&release.tag, launcher_asset().unwrap_or_default())?;
+    let sha256 = signed_digest(REPO, &release.tag, launcher_asset().unwrap_or_default())?;
     let work = update_work_dir();
     remove_abandoned_stages(&work, std::time::SystemTime::now(), process_alive);
     let stage = new_stage_folder(&work)?;
@@ -3913,9 +3919,9 @@ pub fn place_staged(staged: &Staged) -> Result<(), String> {
     Ok(())
 }
 
-/// The website's install page, where a launcher that can't update itself sends the player.
+/// The page where a launcher that can't update itself sends the player: the project's own page.
 pub fn download_page(website: &str) -> String {
-    format!("{}/docs/install", website.trim_end_matches('/'))
+    website.trim_end_matches('/').to_owned()
 }
 
 /// Whether this copy of the launcher can't put a new one in its place: its folder is read-only (a
@@ -4193,8 +4199,17 @@ impl WhilePlaying {
     }
 }
 
+fn offline_on() -> bool {
+    true
+}
+
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct Settings {
+    /// Offline names play without an account that owns the game, in the window only
+    /// (`account::Accounts::play_as_with`, `account::launch_for_game`). Never a download: the game still
+    /// comes from the player's own install. On by default; only a player who turned it off has `false`.
+    #[serde(default = "offline_on", skip_serializing_if = "std::ops::Not::not")]
+    pub dev_offline: bool,
     pub selected: Option<String>,
     /// Game asset architecture. Auto preserves the launcher's process-architecture behavior.
     #[serde(default)]
@@ -4235,14 +4250,6 @@ pub struct Settings {
     /// a theme being one look.
     #[serde(default)]
     pub appearance: Appearance,
-    /// The player has read what the "I'm playing" ping holds (`telemetry::PING`): on the
-    /// first-run question, or on the Play page once if they answered that before it existed.
-    #[serde(default)]
-    pub ping_notice_seen: bool,
-    /// The player turned the anonymous "I'm playing" ping off (`telemetry::PING`): the game is
-    /// started with `HORIZON_NO_HEARTBEAT`. On by default, as upstream sends it.
-    #[serde(default)]
-    pub ping_off: bool,
     /// The look's flourishes, each on or off (`effects`): glow, gradients, the hover shine.
     #[serde(default)]
     pub effects: crate::effects::Effects,
@@ -4253,13 +4260,6 @@ pub struct Settings {
     /// one now (the owner gate's screen).
     #[serde(default)]
     pub owner_notice_seen: bool,
-    /// Seconds a partner banner (the sidebar's card or the Servers page's banner) has been on
-    /// screen, over every start, up to `partner::SEEN_BEFORE_HIDE`: only then can the player hide it.
-    #[serde(default)]
-    pub partner_seen_secs: u64,
-    /// The player hid a partner banner: the sidebar's card and the Servers page's banner are both gone for good.
-    #[serde(default)]
-    pub partner_hidden: bool,
     /// What the window does while the game runs. Stays by default.
     #[serde(default)]
     pub while_playing: WhilePlaying,
@@ -4327,7 +4327,10 @@ impl Settings {
     }
     pub fn parse(text: &str) -> Self {
         let Ok(mut value) = serde_json::from_str::<serde_json::Value>(text) else {
-            return Self::default();
+            return Self {
+                dev_offline: true,
+                ..Self::default()
+            };
         };
         if let Some(fields) = value.as_object_mut() {
             // An appearance from a newer launcher is Dark, not a reason to lose every setting.
@@ -4368,7 +4371,10 @@ impl Settings {
                 fields.remove("language");
             }
         }
-        let mut settings: Self = serde_json::from_value(value).unwrap_or_default();
+        let mut settings: Self = serde_json::from_value(value).unwrap_or_else(|_| Self {
+            dev_offline: true,
+            ..Self::default()
+        });
         look_settings::settle(&mut settings);
         settings
     }
@@ -6254,9 +6260,8 @@ pub fn {f}("
     #[test]
     fn links_fall_back_to_the_built_in_ones() {
         let defaults = Links::default();
-        assert_eq!(defaults.discord, "https://discord.gg/playhorizon");
-        assert_eq!(defaults.sponsor, "https://github.com/sponsors/ludovic111");
-        assert_eq!(defaults.website, "https://playhorizon.dev");
+        assert_eq!(defaults.discord, "");
+        assert_eq!(defaults.website, "");
         assert_eq!(
             Links::parse(r#"{"roadmap":"https://example.org/tasks","docs":" "}"#),
             Links {
@@ -6281,10 +6286,10 @@ pub fn {f}("
             }
         );
         assert_eq!(
-            Links::parse(r#"{"discord": "", "sponsor": " "}"#),
+            Links::parse(r#"{"discord": "", "website": " "}"#),
             Links {
                 discord: String::new(),
-                sponsor: String::new(),
+                website: String::new(),
                 ..defaults.clone()
             }
         );
@@ -6992,6 +6997,7 @@ pub fn {f}("
         fs::write(dir.join("other"), "other update").unwrap();
         fs::rename(dir.join("other"), &exe).unwrap();
         fs::write(dir.join("new"), "new").unwrap();
+        fs::set_permissions(&exe, fs::Permissions::from_mode(0o644)).unwrap();
         replace_binary(&dir.join("new"), &exe).unwrap();
         assert_eq!(fs::read_to_string(&exe).unwrap(), "new");
         // The file there keeps its mode, made executable (the swapped-in one was 0644).

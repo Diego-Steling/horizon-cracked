@@ -123,7 +123,7 @@ impl Launcher {
             .child(motion::enter(
                 ElementId::named_usize("home-status", self.switches),
                 2,
-                self.played_text(cx),
+                self.played_text(),
             ))
             .child(motion::enter(
                 ElementId::named_usize("home-actions", self.switches),
@@ -294,9 +294,8 @@ impl Launcher {
             )
     }
 
-    /// "You've played for 41 h 06 min! Last played today.", or how long it has run now; then
-    /// the players counts the launcher knows (not in the mockup).
-    fn played_text(&self, cx: &mut Context<Self>) -> Div {
+    /// "You've played for 41 h 06 min! Last played today.", or how long it has run now.
+    fn played_text(&self) -> Div {
         let line = match (self.client_since, self.selected_instance()) {
             (Some(since), _) => trf(
                 "Playing for {time} now. Have fun!",
@@ -320,41 +319,6 @@ impl Launcher {
             },
             (None, None) => String::new(),
         };
-        let link = |id: &'static str, label: String| {
-            div()
-                .id(id)
-                .cursor_pointer()
-                .hover(|s| s.text_color(white(ink::FULL)))
-                .child(label)
-        };
-        let playing = self.playing.map(|count| {
-            let label = format!(
-                "· {}",
-                trf("{count} playing now", &[("count", &thousands(count))])
-            );
-            let url = telemetry::stats_url(&self.links.website);
-            link("playing-now", label).on_click(move |_: &ClickEvent, _, cx| {
-                if let Some(url) = &url {
-                    cx.open_url(url);
-                }
-            })
-        });
-        let official = self.official_players.map(|count| {
-            link(
-                "official-players",
-                format!(
-                    "· {}",
-                    trf(
-                        "{count} on the official SMP",
-                        &[("count", &thousands(count))]
-                    )
-                ),
-            )
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.go(Page::Servers);
-                cx.notify();
-            }))
-        });
         // A local unsigned developer base is said as such, with its trust warning.
         let developer = self
             .selected_instance()
@@ -375,8 +339,6 @@ impl Launcher {
             .flex_wrap()
             .gap(px(4.))
             .child(line)
-            .children(playing)
-            .children(official)
             .children(developer.map(|status| div().w_full().text_color(ui::warn()).child(status)))
     }
 

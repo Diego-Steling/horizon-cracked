@@ -714,7 +714,8 @@ impl Launcher {
                     Some(b.menu_entry.into_any_element()),
                     &t,
                 ))
-            });
+            })
+            .children(self.dev_options_section(cx));
         vec![
             launcher,
             appearance,
@@ -723,7 +724,14 @@ impl Launcher {
             game,
             network,
             section(6).child(self.glass_storage(cx)),
-            section(7).child(self.collection_section(cx)),
+            section(7).child(
+                div()
+                    .px(px(14.))
+                    .py(px(12.))
+                    .child(ui::text(13., FontWeight::NORMAL, ink::BODY).child(tr(
+                        "Telemetry, crash uploads, and data collection are completely disabled in this build.",
+                    ))),
+            ),
             ai,
             about,
         ]

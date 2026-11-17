@@ -1,8 +1,6 @@
 use super::*;
 
 pub enum Msg {
-    Playing(Option<u64>),
-    OfficialPlayers(Option<u64>),
     Storage(Result<Box<crate::storage::Report>, String>),
     Releases(Result<Vec<Release>, String>),
     Links(Links),

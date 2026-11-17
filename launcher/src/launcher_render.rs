@@ -229,7 +229,6 @@ impl Render for Launcher {
                         }
                     }
                     "escape" if this.welcome_escape() => {}
-                    "escape" if this.consent_escape() => {}
                     "escape" if this.native_log_escape() => {}
                     "escape" if this.servers_escape() => {}
                     "escape" if this.instance_escape() => {}
@@ -350,8 +349,6 @@ impl Render for Launcher {
         }
         if self.welcoming() {
             root = root.child(self.welcome_screen(cx));
-        } else if self.asking_consent() {
-            root = root.child(self.consent_screen(cx));
         }
         if self.asking_owner() {
             root = root.child(self.owner_screen(cx));
