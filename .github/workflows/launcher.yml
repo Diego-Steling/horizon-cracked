@@ -1,8 +1,13 @@
 name: launcher
-# Builds the launcher on Linux, macOS, Windows x64 and ARM64, and releases it by itself (docs/release-flow.md): after a
-# push to main that changes the launcher or a crate it builds in (the paths below),
-# every 10 minutes (a release waiting for merges to settle goes out) and by hand, tools/release_train.py decides as
-# for the game.
+# The launcher's release on Linux alone is launcher-linux.yml, which runs on every launcher change and by hand. This
+# workflow is the one for the other platforms, and it runs by hand only until they have a runner: no push and no
+# schedule start it, so nothing releases from here on its own (tools/release_train.py still decides, and a manual
+# run of main with dry_run=false publishes).
+# macOS is off: this account has no GitHub-hosted macOS runner and the self-hosted Mac mini is gone, so those jobs
+# would wait in the queue forever. Re-enable it by restoring the two macOS matrix entries commented out below (with
+# `mac: true` and `mac_arch`), the `runs-on` expression that names the runner (a MAC_RUNNER repository variable, or a
+# runner of the account's own), and a timeout that covers notarizing; a hosted runner needs the Developer ID in
+# MACOS_SIGN_IDENTITY to sign and notarize (packaging/macos/README.md), else the app is signed ad hoc.
 # A release is launcher@X.Y.Z on the release line in .github/release-line.txt (docs/versioning.md); without it
 # launcher-vX.Y.Z, the patch after the last launcher tag or the next minor when a merged pull request is labelled
 # feature. The version and the tag are given to the build (HORIZON_LAUNCHER_VERSION, HORIZON_LAUNCHER_TAG): no bump
@@ -11,10 +16,6 @@ name: launcher
 # Linux ships two archives of one binary: the .tar.gz the launcher updates itself from, and an
 # AppImage (packaging/linux/appimage.sh) for players without a distribution package, which replaces
 # itself instead (launcher/src/backend.rs).
-# macOS: Apple Silicon, and Intel cross-built for x86_64-apple-darwin on the same runner, its tests and smoke test
-# under Rosetta 2 (#1161). With the repository variable MACOS_SIGN_IDENTITY set, Horizon.app and the .dmg are signed with
-# Developer ID, notarized and stapled, from the runner's signing keychain (packaging/macos/README.md);
-# unset (forks), they are signed ad hoc.
 # Windows ships each architecture's launcher in its ZIP (what a launcher updates itself from) and as
 # horizon-launcher-setup.exe or horizon-launcher-setup-arm64.exe, which opens the per-user installer instead of Home
 # (launcher/src/installer.rs).
@@ -22,25 +23,6 @@ name: launcher
 #   gh workflow run launcher --ref main -f dry_run=false -f force=true
 
 on:
-  push:
-    branches: [main, launcher, 'launcher-*']
-    paths:
-      # Everything the launcher is built and packaged from, as tools/release_train.py's LAUNCHER_PATHS.
-      - 'launcher/**'
-      - 'crates/horizon-bench/**'
-      - 'crates/horizon-friends/**'
-      - 'crates/horizon-mcp/**'
-      - 'crates/horizon-mod-package/**'
-      - 'crates/horizon-port-pack/**'
-      - 'crates/horizon-prepare/**'
-      - 'crates/horizon-release-sign/**'
-      - 'crates/horizon-telemetry/**'
-      - 'crates/horizon-theme/**'
-      - 'packaging/linux/**'
-      - 'packaging/icons/**'
-      - '.github/workflows/launcher.yml'
-  schedule:
-    - cron: '7-59/10 * * * *'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -58,10 +40,6 @@ permissions:
 concurrency:
   group: launcher-${{ github.ref == 'refs/heads/main' && 'release' || github.ref }}
   cancel-in-progress: false
-
-env:
-  # Test runs never reach the telemetry server: no live-count ping, no uploads (docs/telemetry.md).
-  HORIZON_TELEMETRY_URL: "off"
 
 jobs:
   decide:
@@ -85,9 +63,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASES_PAUSED: ${{ vars.RELEASES_PAUSED }}
-          # A push or a run off main builds its own commit; otherwise main's newest commit with green checks.
-          HEAD_SHA: ${{ (github.event_name == 'push' || steps.mode.outputs.dry_run == 'true') && github.sha || '' }}
-          FORCE: ${{ inputs.force && 'yes' || '' }}
+          # A run builds its own commit, from main or by hand; otherwise main's newest commit with green checks.
+          HEAD_SHA: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || steps.mode.outputs.dry_run == 'true') && github.sha || '' }}
+          FORCE: ${{ (inputs.force || github.event_name == 'workflow_dispatch') && 'yes' || '' }}
         run: |
           # Never turn a failed release decision into a successful tee/summary step.
           set -euo pipefail
@@ -118,17 +96,19 @@ jobs:
             os: ubuntu-22.04
             asset: horizon-launcher-linux-x86_64.tar.gz
             binary: horizon-launcher
-          - name: macos
-            mac: true
-            asset: horizon-launcher-macos-arm64.zip
-            binary: horizon-launcher
-            mac_arch: arm64
-          - name: macos-x64
-            mac: true
-            target: x86_64-apple-darwin
-            asset: horizon-launcher-macos-x64.zip
-            binary: horizon-launcher
-            mac_arch: x64
+          # macOS is off until this account has a working runner (see the header): re-enable these two entries
+          # together with the `runs-on` expression below, which names the runner.
+          # - name: macos
+          #   mac: true
+          #   asset: horizon-launcher-macos-arm64.zip
+          #   binary: horizon-launcher
+          #   mac_arch: arm64
+          # - name: macos-x64
+          #   mac: true
+          #   target: x86_64-apple-darwin
+          #   asset: horizon-launcher-macos-x64.zip
+          #   binary: horizon-launcher
+          #   mac_arch: x64
           - name: windows
             os: windows-latest
             asset: horizon-launcher-windows-x64.zip
@@ -147,9 +127,12 @@ jobs:
             setup_asset: horizon-launcher-setup-arm64.exe
             # The C runtime linked in, so the standalone ARM64 launcher needs no redistributable.
             rustflags: -C target-feature=+crt-static
-    runs-on: ${{ matrix.mac && (vars.MAC_RUNNER || 'ludovics-mac-mini') || matrix.os }}
-    # Notarizing the app and then the .dmg can take a few minutes each.
-    timeout-minutes: ${{ matrix.mac && 60 || 40 }}
+    # A macOS entry's runner: a MAC_RUNNER repository variable when one is set, else a self-hosted Mac of the
+    # account's. Uncomment with the matrix entries above; without one, its jobs would wait in the queue forever.
+    # runs-on: ${{ matrix.mac && (vars.MAC_RUNNER || 'ludovics-mac-mini') || matrix.os }}
+    runs-on: ${{ matrix.os }}
+    # Notarizing the app and then the .dmg can take a few minutes each: a macOS entry needs 60.
+    timeout-minutes: 40
     env:
       RUSTFLAGS: ${{ matrix.rustflags }}
       # Where cargo puts the launcher: target/release, or target/<target>/release for another target.
@@ -276,9 +259,12 @@ jobs:
             fi
             [[ $status == 0 ]] || exit $status
           fi
-          retry "$launcher" install latest
+          # The newest Nightly predates its own signature (SHA256SUMS.v2.sig), which the launcher
+          # requires: install the newest stable release instead until a signed Nightly exists.
+          stable=$(retry "$launcher" --json versions | python3 -c 'import json,sys; vs=[v for v in json.load(sys.stdin) if v["available_here"] and not v["tag"].startswith("nightly-")]; print(vs[0]["tag"])')
+          retry "$launcher" install "$stable"
           "$launcher" versions --installed
-          # `install latest` is the Nightly since #3342 (versions/nightly-<date>-<commit>), a vX.Y.Z before.
+          # The stable release installed above lands under versions/<tag>/.
           clients=("$HORIZON_LAUNCHER_HOME"/versions/*/horizon-client*)
           client="${clients[0]}"
           echo "installed client: $client"

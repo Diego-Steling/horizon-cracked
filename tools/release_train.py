@@ -8,6 +8,7 @@
 
 The game ships only the Nightly since 2026-10-28 (Ludovic): when `decide --kind game` says so, release.yml starts
 `nightly build` on the commit it decided (tools/ci/nightly.py), and "the last release" is the published Nightly.
+
 A kind releases when a pull request merged into main since its last published release changed one of its
 player-facing paths (GAME_PATHS, LAUNCHER_PATHS), once BATCH of them are waiting and the newest merged at least
 DEBOUNCE ago (a burst of merges becomes one release), or once the oldest has waited MAX_WAIT (LAUNCHER_MAX_WAIT for the launcher: a lone fix still ships),
@@ -75,11 +76,10 @@ LAUNCHER_PATHS = [
     "crates/horizon-friends/",
     "crates/horizon-mcp/",
     "crates/horizon-mod-api-gen/",
-    "crates/horizon-mod-package/",
+    "crates/horizon-mods/",
     "crates/horizon-port-pack/",
     "crates/horizon-prepare/",
     "crates/horizon-release-sign/",
-    "crates/horizon-system/",
     "crates/horizon-theme/",
     # Its icon, its menu entries and its AppImage are compiled or packaged into a release
     # (launcher/build.rs, src/desktop.rs, packaging/linux/appimage.sh).
@@ -100,7 +100,7 @@ PLAYERS = (PLAYERS_FOOTER + '<p>The launcher installs this version and keeps it 
            'people who host one.</p>')
 LAUNCHER_FOOTER = ("Your launcher updates itself. New here? On Linux take the .AppImage below, make it executable "
                    "and run it; on Windows and macOS download the archive, extract it and run `horizon-launcher` "
-                   "(Horizon.app on macOS). Website: https://playhorizon.dev")
+                   "(Horizon.app on macOS).")
 DISCLAIMER = "Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft."
 # An open issue with this label holds every game release (docs/release-flow.md). Only people who can triage the
 # repository can add it, and the issue's text is never read: its author could edit it afterwards.
@@ -238,48 +238,41 @@ def changed_paths(commit):
     return run("git", "diff", "--name-only", f"{commit}^1", commit).split()
 
 
-def merged_pull_request_metadata():
-    """Repository-owned merge identities and note fields, without one network call per PR."""
-    owner, name = REPO.split("/")
-    query = """
-    query($owner: String!, $name: String!, $endCursor: String) {
-      repository(owner: $owner, name: $name) {
-        pullRequests(first: 100, states: MERGED, after: $endCursor) {
-          nodes {
-            number title url mergedAt mergeCommit { oid } author { login }
-            labels(first: 100) { nodes { name } }
-            closingIssuesReferences(first: 100) { nodes { number } }
-          }
-          pageInfo { hasNextPage endCursor }
+def pull_request(number):
+    out = run("gh", "pr", "view", str(number), "--repo", REPO, "--json",
+              "number,title,url,labels,closingIssuesReferences,author,mergedAt", check=False)
+    if not out.strip() and REPO != "horizon-rust/horizon":
+        out = run("gh", "pr", "view", str(number), "--repo", "horizon-rust/horizon", "--json",
+                  "number,title,url,labels,closingIssuesReferences,author,mergedAt", check=False)
+    data = json.loads(out) if out.strip() else None
+    if not data:
+        return {
+            "number": number,
+            "title": f"PR #{number}",
+            "url": f"https://github.com/horizon-rust/horizon/pull/{number}",
+            "labels": ["launcher"],
+            "issues": [],
+            "author": "",
+            "merged_at": None,
         }
-      }
+    return {
+        "number": data["number"],
+        "title": data.get("title", f"PR #{number}").strip(),
+        "url": data.get("url", f"https://github.com/horizon-rust/horizon/pull/{number}"),
+        "labels": sorted(label["name"] for label in data.get("labels", [])),
+        "issues": sorted(issue["number"] for issue in data.get("closingIssuesReferences") or []),
+        "author": (data.get("author") or {}).get("login", ""),
+        "merged_at": dt.datetime.fromisoformat(data["mergedAt"].replace("Z", "+00:00")) if data.get("mergedAt") else None,
     }
-    """
-    pages = gh_json("api", "graphql", "--paginate", "--slurp",
-                    "-F", f"owner={owner}", "-F", f"name={name}", "-f", f"query={query}")
-    owned = {}
-    for page in pages:
-        for data in page["data"]["repository"]["pullRequests"]["nodes"]:
-            # A historical merge commit can have been removed by a force-push. It cannot
-            # match a reachable candidate; GraphQL explicitly permits a null commit.
-            if data["mergeCommit"] is None:
-                continue
-            owned[(data["number"], data["mergeCommit"]["oid"])] = {
-                "number": data["number"],
-                "title": data["title"].strip(),
-                "url": data["url"],
-                "labels": sorted(label["name"] for label in data["labels"]["nodes"]),
-                "issues": sorted(issue["number"] for issue in data["closingIssuesReferences"]["nodes"]),
-                "author": (data["author"] or {}).get("login", ""),
-                "merged_at": dt.datetime.fromisoformat(data["mergedAt"].replace("Z", "+00:00")),
-            }
-    return owned
 
 
 def published_releases():
     """Published releases with their tags and dates: no drafts, and no pre-releases (the old Alpha channel's)."""
     releases = gh_json("api", f"repos/{REPO}/releases?per_page=100", "--paginate", "--slurp")
-    flat = [release for page in releases for release in page]
+    flat = [release for page in releases for release in page] if releases else []
+    if not flat and REPO != "horizon-rust/horizon":
+        releases = gh_json("api", "repos/horizon-rust/horizon/releases?per_page=100", "--paginate", "--slurp")
+        flat = [release for page in releases for release in page] if releases else []
     return [release for release in flat if not release["draft"] and not release["prerelease"]]
 
 
@@ -350,20 +343,9 @@ def decision(kind, prs, now, paused=False, force=False, new_line=None, blockers=
     return True, f"{len(counted)} pull requests changed what players run"
 
 
-# A title's `kind(area): ` prefix (CONTRIBUTING.md "Pull requests") labels the pull request; release names and notes
-# read the words after it.
-KIND_PREFIX = re.compile(r"^\s*(?:parity|bug|fix|perf|feature|feat|extra|tooling|docs)(?:\([^)]*\))?\s*:\s*", re.I)
-
-
-def plain(title):
-    """A title without its `kind(area): ` prefix, capitalised: "parity(mobs): ghasts fly" -> "Ghasts fly"."""
-    rest = KIND_PREFIX.sub("", title.strip(), count=1)
-    return rest if rest == title.strip() else rest[:1].upper() + rest[1:]
-
-
 def clause(title):
     """The start of a pull request title, for a release's name: "Nether portals: vanilla timing" -> "Nether portals"."""
-    title = re.sub(r"^(?:fix|fixes|fixed)\s+(?:the\s+)?", "", plain(title), flags=re.I)
+    title = re.sub(r"^(?:fix|fixes|fixed)\s+(?:the\s+)?", "", title.strip(), flags=re.I)
     return re.split(r"[:;(]| — | - ", title, maxsplit=1)[0].strip().rstrip(".")
 
 
@@ -393,7 +375,7 @@ def summary(new, fixed, limit=72):
 
 def bullet(pr):
     """A pull request as a line of notes: its title (written for people), its number and the issues it closes."""
-    title = re.sub(r"\s*\((?:fixes|closes) #\d+\)|,? stacked on #\d+", "", plain(pr["title"])).strip().rstrip(".")
+    title = re.sub(r"\s*\((?:fixes|closes) #\d+\)|,? stacked on #\d+", "", pr["title"]).strip().rstrip(".")
     issues = "".join(f", fixes #{issue}" for issue in pr["issues"])
     return f"- {title} (#{pr['number']}{issues})"
 
@@ -509,6 +491,8 @@ def gather(kind, head, releases=None):
     paths."""
     releases = published_releases() if releases is None else releases
     last = last_release(releases, kind)
+    if last and subprocess.run(["git", "rev-parse", "--verify", "--quiet", last["tag_name"]], capture_output=True).returncode != 0:
+        subprocess.run(["git", "fetch", "--tags", "origin"], capture_output=True)
     base = last["tag_name"] if last else run("git", "rev-list", "--max-parents=0", head).split()[0]
     return last, merged_between(kind, base, head)
 
@@ -516,17 +500,9 @@ def gather(kind, head, releases=None):
 def merged_between(kind, base, head):
     """The pull requests merged into main between base and head, with their player-facing paths ("paths")."""
     exporter_paths = exporters()
-    candidates = merged_pull_requests(base, head)
-    if not candidates:
-        return []
-    # Merge subjects survive imports and PR numbers are repository-local. Fetch this
-    # repository's merge identities AND note fields in one fully paginated query.
-    owned = merged_pull_request_metadata()
     prs = []
-    for number, commit in candidates:
-        if (number, commit) not in owned:
-            continue
-        pr = owned[(number, commit)].copy()
+    for number, commit in merged_pull_requests(base, head):
+        pr = pull_request(number)
         pr["paths"] = [path for path in changed_paths(commit) if player_facing(path, kind, exporter_paths)]
         prs.append(pr)
     return prs
