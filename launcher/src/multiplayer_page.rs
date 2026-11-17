@@ -11,10 +11,10 @@ use std::sync::Arc;
 
 /// A server's players by its server-list status ping, as the game's Multiplayer list sends it
 /// (through the address's SRV record), with a 3-second timeout. None when it doesn't answer.
-fn server_players(address: &str) -> Option<horizon_telemetry::server_status::Players> {
-    let (host, port) = horizon_telemetry::server_status::split_address(address)?;
+fn server_players(address: &str) -> Option<horizon_launcher::server_status::Players> {
+    let (host, port) = horizon_launcher::server_status::split_address(address)?;
     let (host, port) = horizon_platform::protocol::server_redirect(&host, port);
-    horizon_telemetry::server_status::players_at(
+    horizon_launcher::server_status::players_at(
         address,
         (&host, port),
         std::time::Duration::from_secs(3),
