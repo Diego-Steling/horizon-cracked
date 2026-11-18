@@ -239,10 +239,12 @@ def changed_paths(commit):
 
 
 def pull_request(number):
-    out = run("gh", "pr", "view", str(number), "--repo", REPO, "--json",
-              "number,title,url,labels,closingIssuesReferences,author,mergedAt", check=False)
-    if not out.strip() and REPO != "horizon-rust/horizon":
+    out = ""
+    if REPO != "horizon-rust/horizon":
         out = run("gh", "pr", "view", str(number), "--repo", "horizon-rust/horizon", "--json",
+                  "number,title,url,labels,closingIssuesReferences,author,mergedAt", check=False)
+    if not out.strip():
+        out = run("gh", "pr", "view", str(number), "--repo", REPO, "--json",
                   "number,title,url,labels,closingIssuesReferences,author,mergedAt", check=False)
     data = json.loads(out) if out.strip() else None
     if not data:
@@ -502,8 +504,11 @@ def merged_between(kind, base, head):
     exporter_paths = exporters()
     prs = []
     for number, commit in merged_pull_requests(base, head):
+        paths = [path for path in changed_paths(commit) if player_facing(path, kind, exporter_paths)]
+        if not paths:
+            continue
         pr = pull_request(number)
-        pr["paths"] = [path for path in changed_paths(commit) if player_facing(path, kind, exporter_paths)]
+        pr["paths"] = paths
         prs.append(pr)
     return prs
 
